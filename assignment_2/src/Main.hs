@@ -1,13 +1,16 @@
 
-
-
-
 import ExprParser
 import ErrM
 import LexExprGrammar
 import AbsExprGrammar
 import qualified AST as A
 import ParExprGrammar
+import Text.Show.Pretty
+import ExprLifting
+import ExprPrinter
+import Data.Text.Prettyprint.Doc
+import Control.Monad.Trans.Except
+import Control.Monad.Identity
 
 lexSource :: String -> [Token]
 lexSource s = myLexer s
@@ -25,6 +28,18 @@ main :: IO ()
 main = do
     src <- getContents
     let (Ok ast) = runCompiler (lexSource src)
-        convd = A.doConv ast
-    putStrLn $ show ast
-    putStrLn $ show convd
+        (Right convd) = A.doConv ast
+        callGraph = cgProg ast
+        initSets = initSetProg ast
+        lifted = doFixedPoint initSets callGraph
+        (Right lifted') = (runIdentity . runExceptT) $ liftProg lifted ast
+        prettyAst = pretty ast
+        prettyLifted = pretty lifted'
+    putStrLn $ ppShow ast
+    putStrLn $ ppShow convd
+    putStrLn $ ppShow callGraph
+    putStrLn $ ppShow initSets
+    putStrLn $ ppShow lifted
+    putStrLn $ ppShow lifted'
+    putStrLn $ show prettyAst
+    putStrLn $ show prettyLifted

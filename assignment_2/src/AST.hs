@@ -1,12 +1,11 @@
 module AST where
 
-{-# LANGUAGE TemplateHaskell #-}
-
 import qualified SymbolTable as S
 import Control.Monad.State
 import Control.Lens
 import Control.Monad.Trans.State
 import Control.Monad.Trans.Except
+import Data.Text.Prettyprint.Doc
 
 data Prog a b 
     = Prog [Fun a b]
@@ -38,71 +37,32 @@ data Exp a b
     | Let [Fun a b] (Exp a b)
     deriving (Show)
 
-testProg = Prog [ (Fun ("main", [], Add (IVal 1) (IVal 1))) ]
+type STState = ExceptT String S.SymbolTableST 
 
-type STState a = State StateType a
-
-data StateType = StateType
-    { _symbolTable :: S.ST
-    , _varLabel :: Int
-    , _funLabel :: Int
-    }
-    deriving (Show)
-
-makeLenses ''StateType
-
-pushLevel :: STState ()
-pushLevel = state $ \s -> let new = (over symbolTable S.pushLevel) s
-                          in ((), new)
-
-popLevel :: STState ()
-popLevel = state $ \s -> let new = (over symbolTable S.popLevel) s
-                         in ((), new)
-
-getFnLabel :: STState Int
-getFnLabel = state $ \s -> let new = (over funLabel succ) s
-                           in (s^.funLabel, new)
-
-getFnName :: STState String
-getFnName = do
-    fnLabel <- getFnLabel
-    return $ "fn" ++ (show fnLabel)
-
-getVarLabel :: STState Int
-getVarLabel = state $ \s -> let new = (over varLabel succ) s
-                            in (s^.varLabel, new)
-
-getVarName :: STState String
-getVarName = do
-    varLabel <- getVarLabel
-    return $ "var" ++ (show varLabel)
-
-insertSym :: String -> String -> STState ()
-insertSym k v = state $ \s -> let new = (over symbolTable upFn) s
-                                  upFn old = S.insert k v old
-                                  in ((), new)
-
-lookupSym :: String -> STState (Maybe String)
-lookupSym k = state $ \s -> let v = S.find k (s^.symbolTable)
-                            in (v, s)
+insertFuncDefs :: [Fun String String] -> STState ()
+insertFuncDefs [] = return ()
+insertFuncDefs ((Fun (name, _, _)):fs) = do
+    newName <- getFnName
+    S.insertSym name newName
+    insertFuncDefs fs
 
 convProg :: Prog String String -> STState (Prog String String)
 convProg (Prog []) = return $ Prog []
-convProg (Prog (f:fs)) = do
-    pushLevel    
+convProg (Prog funcs@(f:fs)) = do
+    S.addLevel    
+    insertFuncDefs funcs
     alpha <- convFn f 
     (Prog rest) <- convProg (Prog fs)
-    popLevel
+    S.remLevel
     return $ Prog (alpha:rest)
 
 convFn :: Fun String String -> STState (Fun String String)
 convFn f@(Fun (name, args, exp)) = do
-    newName <- getFnName
-    insertSym name newName
-    pushLevel
+    S.addLevel
+    newName <- S.lookupSym name
     newArgs <- convArgs args
     newExp <- convExp exp
-    popLevel
+    S.remLevel
     return $ Fun (newName, newArgs, newExp)
 
 convExp :: Exp String String -> STState (Exp String String)
@@ -115,24 +75,23 @@ convExp (Neg e) = do
     return $ Neg e
 convExp iv@(IVal i) = return iv
 convExp (Var b) = do
-    newName <- lookupSym b
-    let (Just nn) = newName
-    return $ Var nn
+    newName <- S.lookupSym b
+    return $ Var newName
 convExp (Cond cond ifClause elseClause) = do
     newCond <- convBExp cond
     newIf <- convExp ifClause
     newElse <- convExp elseClause
     return $ Cond newCond newIf newElse
 convExp (App fName expList) = do
-    newName <- lookupSym fName
-    let (Just nn) = newName
+    newName <- S.lookupSym fName
     newExpList <- convExpList expList
-    return $ App nn newExpList
+    return $ App newName newExpList
 convExp (Let funList e) = do
-    pushLevel
+    S.addLevel
+    insertFuncDefs funList
     newFunList <- convFnList funList
     newE <- convExp e
-    popLevel
+    S.remLevel
     return $ Let newFunList newE
 
 convExp' tc le re = do
@@ -146,6 +105,7 @@ convBExp' tc le re = do
     return $ tc le re
 
 convFnList :: [Fun String String] -> STState ([Fun String String])
+convFnList [] = return []
 convFnList (f:fs) = do
     newFn <- convFn f
     rest <- convFnList fs
@@ -172,12 +132,26 @@ convArgs :: [String] -> STState [String]
 convArgs [] = return []
 convArgs (a:as) = do
     newName <- getVarName
-    insertSym a newName
+    S.insertSym a newName
     rest <- convArgs as
     return (newName:rest)
 
-doConv :: Prog String String -> Prog String String
-doConv p = fst $ runState (convProg p) (StateType S.mkEmpty 0 0)
+getVarName :: STState String
+getVarName = do
+   label <- S.getVarLabel
+   return $ "var" ++ show label
+
+getFnName :: STState String
+getFnName = do
+    label <- S.getFnLabel
+    return $ "fun" ++ show label
+
+doConv :: Prog String String -> Either String (Prog String String)
+doConv p = (fst . runIdentity) stateTup
+    where
+        stM = convProg p
+        stateM = runExceptT stM
+        stateTup = runStateT stateM (S.mkInitState)
 
 main :: IO ()
 main = do
@@ -185,8 +159,8 @@ main = do
                         , ["a", "b"] 
                         , (Add (Var "a") (Var "b"))))
                   ]
-        res = runState (convProg ts) (StateType S.mkEmpty 0 0)
-    putStrLn $ show res
+        -- res = runState (convProg ts) (StateType S.empty 0 0)
+    putStrLn $ "Hola Mundas"
 
 
 
