@@ -5,7 +5,6 @@ import Control.Monad.State
 import Control.Lens
 import Control.Monad.Trans.State
 import Control.Monad.Trans.Except
-import Data.Text.Prettyprint.Doc
 
 data Prog a b 
     = Prog [Fun a b]

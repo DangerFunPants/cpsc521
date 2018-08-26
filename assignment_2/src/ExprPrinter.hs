@@ -40,12 +40,6 @@ instance (Pretty a, Pretty b) => Pretty (Exp a b) where
                                               , (indent 4 letBody) 
                                               ] 
         where
-            -- ps = [ (pretty "let")
-            --      , indent
-            --      , (sep (fmap pretty fnList))
-            --      , (pretty "in")
-            --      , (pretty body)
-            --      ]
             letFuns = sep (fmap pretty fnList)
             letBody = pretty body
 instance (Pretty a, Pretty b) => Pretty (BExp a b) where

@@ -6,6 +6,7 @@ import qualified Data.Map as M
 import qualified Data.Set as S
 import Control.Monad.Trans.Except
 import Control.Monad.Identity
+import qualified Text.Show.Pretty as PP 
 
 cgProg :: Prog String String -> [(String, String)]
 cgProg (Prog funList) = cgFunList funList
@@ -90,32 +91,31 @@ initSetBExp' d name e1 e2 = newD
         w1 = initSetBExp d name e1
         newD = initSetBExp w1 name e2
 
-liftFns :: MT -> [(String, String)] -> MT
-liftFns d ((u, v):ls) = newD
+liftFns :: MT -> [(String, String)] -> ErrM MT
+liftFns d ((u, v):ls) = do
+    vs <- tryLookup v d
+    let thisOne = M.update (upFn vs) u d
+    newD <- liftFns thisOne ls
+    return newD
     where
-        thisOne = M.update (upFn v) u d
-        upFn v (uAs, uFs) = Just $ (uAs, (uFs `S.union` (vFs `S.difference` vAs)))
-            where
-                Just (vAs, vFs) = M.lookup v d
-        newD = liftFns thisOne ls
-liftFns d [] = d
+        upFn (vAs, vFs) (uAs, uFs) = Just $ (uAs, (uFs `S.union` (vFs `S.difference` vAs)))
+liftFns d [] = return d
 
-doFixedPoint :: MT -> [(String, String)] -> MT
-doFixedPoint d ls = 
-    if fstI == sndI 
-        then sndI
+doFixedPoint :: MT -> [(String, String)] -> ErrM MT
+doFixedPoint d ls = do
+    fstI <- liftFns d ls
+    sndI <- liftFns fstI ls
+    if fstI == sndI
+        then return sndI
         else doFixedPoint sndI ls
-    where
-        fstI = liftFns d ls
-        sndI = liftFns fstI ls
 
 type ErrM = ExceptT String Identity
 
-tryLookup :: (Ord k) => k -> M.Map k v -> ErrM v
+tryLookup :: (Ord k, Show k, Show v) => k -> M.Map k v -> ErrM v
 tryLookup k m = do
     case (M.lookup k m) of
         (Just v) -> return v
-        Nothing -> throwE $ "Dictionary Lookup Failed"
+        Nothing -> throwE $ "Dictionary Lookup for: " ++ (show k) ++ " Failed in: \n" ++ PP.ppShow m
 
 liftProg :: MT -> Prog String String -> ErrM (Prog String String)
 liftProg d (Prog funList) = do

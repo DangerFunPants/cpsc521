@@ -8,10 +8,10 @@ CFLAGS=-XTemplateHaskell
 SRC_DIR = ./src
 BNFC_SOURCES = $(BNFC_DIR)/AbsExprGrammar.hs $(BNFC_DIR)/ErrM.hs $(BNFC_DIR)/LexExprGrammar.hs $(BNFC_DIR)/ParExprGrammar.hs $(BNFC_DIR)/PrintExprGrammar.hs $(BNFC_DIR)/SkelExprGrammar.hs
 
-mcc : $(BNFC_DIR)/$(CF_FILE) $(SRC_DIR)/*.hs TestM
-	$(CC) $(CFLAGS) $(SRC_DIR)/*.hs $(BNFC_SOURCES) -o mcc
+a2 : $(BNFC_DIR)/$(CF_FILE) $(SRC_DIR)/*.hs TestExprGrammar
+	$(CC) $(CFLAGS) $(SRC_DIR)/*.hs $(BNFC_SOURCES) -o a2
 
-TestM : $(BNFC_DIR)/$(CF_FILE)
+TestExprGrammar : $(BNFC_DIR)/$(CF_FILE)
 	$(BNFC) -haskell -m $(BNFC_DIR)/$(CF_FILE) -o $(BNFC_DIR)
 	$(MAKE) -C $(BNFC_DIR)
 	mv $(BNFC_DIR)/TestExprGrammar ./
