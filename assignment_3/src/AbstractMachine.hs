@@ -6,6 +6,7 @@ import Control.Monad.Trans.State
 import Control.Monad.Trans.Except
 import Control.Monad.Identity
 import Control.Monad.Trans.Class (lift)
+import Text.Show.Pretty
 
 import qualified Instruction    as I
 import qualified StackItem      as S
@@ -26,11 +27,23 @@ pushStackItem item = lift $ StateT $ \s ->
     let new = (over stack (\st -> item:st)) s
     in return ((), new)
 
-popStackItem :: StackState S.StackItem
-popStackItem = lift $ StateT $ \s ->
+popStackItem' :: StackState ()
+popStackItem' = lift $ StateT $ \s ->
     let v = head $ s^.stack
         new = (over stack tail) s
-    in return (v, new)
+    in return ((), new)
+
+popStackItem :: StackState S.StackItem
+popStackItem = do
+    s <- getStack
+    if null s
+        then throwE "Attempt to pop empty stack"
+        else popStackItem' >> (return $ head s)
+
+getStack :: StackState [S.StackItem]
+getStack = lift $ StateT $ \s ->
+    let v = s^.stack
+    in return (v, s)
 
 getNextInstruction :: StackState I.SECDInstruction
 getNextInstruction = do
@@ -68,19 +81,43 @@ popEnv = lift $ StateT $ \s ->
 
 pushToCode :: [I.SECDInstruction] -> StackState ()
 pushToCode iList = lift $ StateT $ \s ->
-    let new = (over code (++iList)) s
+    let new = (over code (iList++)) s
     in return ((), new)
 
 stepMachine :: I.SECDInstruction -> StackState ()
-stepMachine (I.Const i) = pushStackItem (S.IVal i)
+-- Boolean Instructions
 stepMachine (I.True) = pushStackItem (S.BVal True)
 stepMachine (I.False) = pushStackItem (S.BVal False)
+stepMachine (I.IfThenElse) = do
+    c <- popStackItem
+    ifC <- popStackItem
+    elseC <- popStackItem
+    case c of
+        (S.BVal t) -> do
+            if t
+                then pushStackItem ifC
+                else pushStackItem elseC
+        otherwise -> throwE $ "Expected boolean, got: " ++ (show c)
+
+-- Arithmetic Instructions
+stepMachine (I.Const i) = pushStackItem (S.IVal i)
 stepMachine (I.Add) = do
     s1 <- popStackItem
     s2 <- popStackItem
-    result <- addItems s1 s2 
+    result <- arithmeticOp s1 s2 (+)
+    pushStackItem result
+stepMachine (I.Mul) = do
+    s1 <- popStackItem
+    s2 <- popStackItem
+    result <- arithmeticOp s1 s2 (*)
+    pushStackItem result
+stepMachine (I.LEq) = do
+    s1 <- popStackItem
+    s2 <- popStackItem
+    result <- intToBooleanOp s1 s2 (<=)
     pushStackItem result
 
+-- Function Calls and Variable Access
 stepMachine (I.App) = do
     closure <- popStackItem
     case closure of
@@ -89,18 +126,33 @@ stepMachine (I.App) = do
             pushToEnv arg
             pushToCode iList
         otherwise -> throwE $ "Expected a closure and got: " ++ (show closure)
-
 stepMachine (I.Access offset) = (lookupEnv offset) >>= pushStackItem
 stepMachine (I.Ret) = popEnv
-
 stepMachine (I.Closure iList) = pushStackItem $ S.Closure iList []
 
-addItems :: S.StackItem -> S.StackItem -> StackState S.StackItem
-addItems (S.IVal i) (S.IVal j) = return (S.IVal (i + j))
-addItems i j = throwE $ 
-    "Attempted to add non integer arguments: " 
-    ++ (show i) 
-    ++ " and " 
+
+arithmeticOp :: S.StackItem 
+             -> S.StackItem 
+             -> (Int -> Int -> Int) 
+             -> StackState S.StackItem
+arithmeticOp (S.IVal i) (S.IVal j) op = return $ S.IVal (i `op` j)
+arithmeticOp i j _ = throwE $
+    "Attempted to perform arithmetic operation "
+    ++ "on non integer arguments: "
+    ++ (show i)
+    ++ " and "
+    ++ (show j)
+
+intToBooleanOp :: S.StackItem
+               -> S.StackItem
+               -> (Int -> Int -> Bool)
+               -> StackState S.StackItem
+intToBooleanOp (S.IVal i) (S.IVal j) op = return $ S.BVal (i `op` j)
+intToBooleanOp i j _ = throwE $ 
+    "Attempted to perform arithmetic operation "
+    ++ "on non integer arguments: "
+    ++ (show i)
+    ++ " and "
     ++ (show j)
     
 execute :: StackState ()
@@ -109,9 +161,12 @@ execute = do
     stepMachine nextI
     execute
 
+execCode :: [I.SECDInstruction] -> (Either String (), StateType)
 execCode code = (runIdentity . stateFun . runExceptT) execute
     where
         stateFun = (flip runStateT) (StateType code [] [])
+
+deBruijn :: Term -> DeBruijnTerm
 
 main :: IO ()
 main = do
@@ -121,6 +176,7 @@ main = do
              , I.Const 3
              , I.Add
              ]
+        -- (\x. x + 1) 2
         ts1 = [ I.Const 2
               , I.Closure [ I.Const 1
                           , I.Access 0
@@ -129,12 +185,29 @@ main = do
                           ]
               , I.App
               ]
-        res = execCode ts1
-    putStrLn $ show res
-
-
-
-
-
-
-
+        -- (\x. (\y. 5 * y) 2 + 2) 2
+        ts2 = [ I.Const 2
+              , I.Closure [ I.Const 2
+                          , I.Closure [ I.Const 5
+                                      , I.Access 0
+                                      , I.Mul
+                                      , I.Ret
+                                      ]
+                          , I.App
+                          , I.Access 0
+                          , I.Add
+                          , I.Ret
+                          ]
+              , I.App
+              ]
+        ts3 = [ I.Const 5
+              , I.Closure [ I.Const 2
+                          , I.Access 0
+                          , I.Mul
+                          , I.Ret
+                          ]
+              , I.App
+              ]
+        res = execCode ts2
+    putStrLn $ ppShow ts2
+    putStrLn $ ppShow res
