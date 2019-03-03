@@ -10,6 +10,7 @@ data SECDInstruction
  | Add
  | Mul
  | LEq
+ | Eq
  -- Boolean Instructions
  | True
  | False

@@ -36,7 +36,7 @@ data Exp a b
     | Let [Fun a b] (Exp a b)
     deriving (Show)
 
-type STState = ExceptT String S.SymbolTableST 
+type STState = ExceptT String (S.SymbolTableST String String)
 
 insertFuncDefs :: [Fun String String] -> STState ()
 insertFuncDefs [] = return ()

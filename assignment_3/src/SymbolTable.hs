@@ -1,16 +1,20 @@
 {-# LANGUAGE KindSignatures #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE ConstraintKinds #-}
 
-module SymbolTable ( SymbolTableST
-                   , addLevel
-                   , remLevel
-                   , getFnLabel
-                   , getVarLabel
-                   , insertSym
-                   , lookupSym
-                   , empty
-                   , mkInitState
-                   ) where
+module SymbolTable 
+    ( SymbolTableST
+    , addLevel
+    , remLevel
+    , getFnLabel
+    , getVarLabel
+    , insertSym
+    , lookupSym
+    , empty
+    , mkInitState
+    , lookupDistance
+    ) where
 
 import qualified Data.Map as M
 import Control.Lens
@@ -18,91 +22,122 @@ import Control.Monad.Trans.State
 import Control.Monad.Trans.Except
 import Control.Monad.Trans.Class (lift)
 
-class SymbolTable (t :: *) where
-    find :: String -> t -> Maybe String
-    insert :: String -> String -> t -> t
-    pushLevel :: t -> t 
-    popLevel :: t -> t 
-    mkEmpty :: t 
+class SymbolTable (t :: * -> * -> *) where
+    find        :: (Ord k) => k -> t k v -> Maybe v
+    insert      :: (Ord k) => k -> v -> t k v -> t k v
+    pushLevel   :: (Ord k) => t k v -> t k v
+    popLevel    :: (Ord k) => t k v -> t k v
+    mkEmpty     :: (Ord k) => t k v
+    distance    :: (Ord k) => k -> t k v -> Maybe Int
 
-instance SymbolTable [M.Map String String] where
-    mkEmpty = []
-    insert k v (tl:rest) = (M.insert k v tl):rest
-    pushLevel st = M.empty:st
-    popLevel (st:rest) = rest
-    find k (st:rest) = 
-        case thisLevel of
-            Nothing -> find k rest
+instance SymbolTable (MapList) where
+    mkEmpty = (MapList [])
+
+    insert k v (MapList (x:xs)) = MapList $ (M.insert k v x):xs
+
+    pushLevel (MapList xs) = MapList $  (M.empty:xs)
+    
+    popLevel (MapList (x:xs)) = MapList xs
+    popLevel (MapList []) = MapList []
+
+    find k (MapList (x:xs)) = 
+        case M.lookup k x of
+            Nothing -> find k (MapList xs)
             (Just v) -> (Just v)
-        where
-            thisLevel = M.lookup k st
-    find _ [] = Nothing
+    find _ (MapList []) = Nothing
 
-type ST = [M.Map String String]
+    distance k (MapList (x:xs)) =
+        case M.lookup k x of
+            Nothing -> do
+                rec <- distance k (MapList xs)
+                return $ 1 + rec
+            Just _ -> return 0
+    distance k (MapList []) = Nothing
 
-data SymbolTableT = SymbolTableT
-    { _symbolTable :: ST
+newtype MapList k v = MapList [M.Map k v]
+
+type ST k v = MapList k v
+
+data SymbolTableT k v = SymbolTableT 
+    { _symbolTable:: ST k v
     , _varLabel    :: Int
     , _funLabel    :: Int
     }
 
 makeLenses ''SymbolTableT
 
-type SymbolTableST = StateT SymbolTableT Identity
+type SymbolTableST k v = StateT (SymbolTableT k v) Identity
 
-addLevel' :: SymbolTableST ()
-addLevel' = StateT $ \s -> let new  = (over symbolTable pushLevel) s
-                          in return ((), new)
+addLevel' :: (Ord k) => (SymbolTableST k v) ()
+addLevel' = StateT $ \s -> 
+    let new = (over symbolTable pushLevel) s
+    in return ((), new)
 
-addLevel :: ExceptT String SymbolTableST ()
+addLevel :: (Ord k) => ExceptT String (SymbolTableST k v) ()
 addLevel = lift addLevel'
 
-remLevel' :: SymbolTableST ()
-remLevel' = StateT $ \s -> let new = (over symbolTable popLevel) s
-                          in return ((), new)
+remLevel' :: (Ord k) => (SymbolTableST k v) ()
+remLevel' = StateT $ \s ->
+    let new = (over symbolTable popLevel) s
+    in return ((), new)
 
-remLevel :: ExceptT String SymbolTableST ()
-remLevel = lift addLevel'
+remLevel :: (Ord k) => ExceptT String (SymbolTableST k v) ()
+remLevel = lift remLevel'
 
-getFnLabel' :: SymbolTableST Int
-getFnLabel' = StateT $ \s -> let new = (over funLabel succ) s
-                                 l = (view funLabel) s
-                             in return (l, new)
+getFnLabel' :: (Ord k) => (SymbolTableST k v) Int
+getFnLabel' = StateT $ \s ->
+    let l = s^.funLabel
+        new = (over funLabel succ) s
+    in return (l, new)
 
-getFnLabel :: ExceptT String SymbolTableST Int
+getFnLabel :: (Ord k) => ExceptT String (SymbolTableST k v) Int
 getFnLabel = lift getFnLabel'
 
-getVarLabel' :: SymbolTableST Int
-getVarLabel' = StateT $ \s -> let new = (over varLabel succ) s
-                                  l = (view varLabel) s
-                              in return (l, new)
+getVarLabel' :: (Ord k) => (SymbolTableST k v) Int
+getVarLabel' = StateT $ \s ->
+    let l = s^.varLabel
+        new = (over varLabel succ) s
+    in return (l, new)
 
-getVarLabel :: ExceptT String SymbolTableST Int
+getVarLabel :: (Ord k) => ExceptT String (SymbolTableST k v) Int
 getVarLabel = lift getVarLabel'
 
-insertSym' :: String -> String -> SymbolTableST ()
-insertSym' k v = StateT $ \s -> let new = (over symbolTable upFn) s
-                                    upFn old = insert k v old
-                                in return ((), new)
+insertSym' :: (Ord k) => k -> v -> (SymbolTableST k v) ()
+insertSym' k v = StateT $ \s -> 
+    let new = (over symbolTable (insert k v)) s
+    in return ((), new)
 
-insertSym :: String -> String -> ExceptT String SymbolTableST ()
+insertSym :: (Ord k) => k -> v -> ExceptT String (SymbolTableST k v) ()
 insertSym k v = lift $ insertSym' k v
 
-lookupSym' :: String -> SymbolTableST (Maybe String)
-lookupSym' k = StateT $ \s -> let v = find k (s^.symbolTable)
-                              in return (v, s)
+lookupSym' :: (Ord k) => k -> (SymbolTableST k v) (Maybe v)
+lookupSym' k = StateT $ \s ->
+    let v = find k (s^.symbolTable)
+    in return (v, s)
 
-lookupSym :: String -> ExceptT String SymbolTableST String
+lookupSym :: (Ord k) => k -> ExceptT String (SymbolTableST k v) v
 lookupSym k = do
     s <- lift $ lookupSym' k
-    case s of 
+    case s of
         (Just v) -> return v
-        Nothing -> throwE $ "Failed to find symbol " ++ k
+        Nothing -> throwE $ "Failed to find symbol" 
 
-empty :: ST
-empty = mkEmpty 
+lookupDistance' :: (Ord k) => k -> (SymbolTableST k v) (Maybe Int)
+lookupDistance' k = StateT $ \s ->
+    let d = distance k (s^.symbolTable)
+    in return (d, s)
 
-mkInitState :: SymbolTableT
+lookupDistance :: (Ord k) => k -> ExceptT String (SymbolTableST k v) Int
+lookupDistance k = do
+    s <- lift $ lookupDistance' k
+    case s of
+        Just v -> return v
+        Nothing -> throwE $ "Symbol not present in table"
+
+empty :: (Ord k) => ST k v
+empty = mkEmpty
+
+mkInitState :: (Ord k) => SymbolTableT k v
 mkInitState = SymbolTableT mkEmpty 0 0
 
 
@@ -114,4 +149,36 @@ mkInitState = SymbolTableT mkEmpty 0 0
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    
+    
 
