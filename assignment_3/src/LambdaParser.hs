@@ -143,7 +143,8 @@ app_parser = do
   let the_app_term = Application lh_term rh_term
   continuation_parser the_app_term
   where
-    app_term_parser = choice $ fmap try [ fix_parser
+    app_term_parser = choice $ fmap try [ let_binding_parser
+                                        , fix_parser
                                         , conditional_parser
                                         , bracketed_expression_parser
                                         , abs_parser
@@ -170,7 +171,8 @@ binary_expression_parser = do
   continuation_parser this_expression
   where
     binary_expression_term_parser = do  
-      expr <- choice $ fmap try [ fix_parser
+      expr <- choice $ fmap try [ let_binding_parser
+                                , fix_parser
                                 , conditional_parser
                                 , bracketed_expression_parser
                                 , abs_parser
@@ -332,6 +334,7 @@ main = do
             , "(\\x. f + x) 1 2" 
             , "if (\\x. true) 5 then 1 + 1 * 2 else (2 + 3)"
             , "let add = \\x. \\y. x + y in add 1 2"
+            , "(\\x. \\y. let add = \\a. \\b. a + b in add x y) 1 2"
             ]
   forM_ src (\src_i -> do
     putStrLn "Original Source: "
