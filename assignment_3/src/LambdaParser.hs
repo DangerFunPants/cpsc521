@@ -13,20 +13,16 @@ import Control.Monad
 --  (2) Abstraction (Func defn)
 --  (3) Application (Func application)
 --  (4) An integer literal
+--  (5) A binary operation (+, -, /, *)
 data Expr
   = Var String
   | Abstraction String Expr
   | Application Expr Expr
-  | IntExpr IntExpr
-  deriving (Show, Eq)
-
-data IntExpr
-  = IntLiteral Int
-  | IntVar Expr 
-  | IntAdd IntExpr IntExpr
-  | IntSub IntExpr IntExpr
-  | IntMul IntExpr IntExpr
-  | IntDiv IntExpr IntExpr
+  | Add Expr Expr
+  | Sub Expr Expr
+  | Mul Expr Expr
+  | Div Expr Expr
+  | IntLiteral Int
   deriving (Show, Eq)
 
 data BinaryOperator
@@ -43,21 +39,24 @@ parse_lambda src =
     Right ast -> Right ast
 
 top_level_lambda_parser = do
-  expr <- choice $ fmap try [ bracketed_expr_parser_top_level
+  -- These need to be ordered from more general to less general
+  expr <- choice $ fmap try [ app_parser_top_level
+                            , bracketed_expr_parser_top_level
+                            , binary_expression_parser_top_level
                             , abs_parser_top_level
-                            , app_parser_top_level
                             , var_parser_top_level
-                            , int_expr_parser_top_level
+                            , lit_parser_top_level
                             ]
   eof
   return expr
 
 lambda_parser = do
-  expr <- choice $ fmap try [ bracketed_expr_parser
+  expr <- choice $ fmap try [ app_parser
+                            , binary_expression_parser
+                            , bracketed_expr_parser
                             , abs_parser
-                            , app_parser
                             , var_parser
-                            , int_expr_parser
+                            , lit_parser
                             ]
   return expr
 
@@ -66,37 +65,67 @@ bracketed_expr_parser_top_level = do
   eof
   return expr
 
+lit_parser_top_level = do
+  the_literal <- lit_parser
+  eof
+  return the_literal
+
+lit_parser = do
+  identifier <- int_lit_parser
+  return identifier
+
+binary_expression_parser_top_level = do
+  binary_operation <- binary_expression_parser
+  eof
+  return binary_operation
+
+binary_expression_parser = do
+  spaces
+  lh_expr <- lhs_parser
+  spaces
+  op_constructor <- binary_operator_parser
+  spaces
+  rh_expr <- rhs_parser
+  spaces
+  let this_expression = lh_expr `op_constructor` rh_expr
+  continuation_parser this_expression
+  where
+    lhs_parser = do
+      expr <- choice $ fmap try [ bracketed_expr_parser
+                                , abs_parser
+                                , app_parser
+                                , var_parser
+                                , lit_parser
+                                ]
+      return expr
+    rhs_parser = lhs_parser
+    continuation_parser the_expr = do
+      spaces
+      operator <- optionMaybe binary_operator_parser
+      case operator of 
+        Nothing -> return the_expr
+        (Just op_constructor) -> do
+          rhs_expr <- rhs_parser
+          continuation_parser (op_constructor the_expr rhs_expr)
+
+binary_operator_parser = do
+  operator <- choice $ fmap try [ binary_minus_parser
+                                , binary_plus_parser
+                                , binary_star_parser
+                                , binary_slash_parser
+                                ]
+  let op_constructor = case operator of
+                        BinaryPlus -> Add
+                        BinaryMinus -> Sub
+                        BinaryStar -> Mul
+                        BinarySlash -> Div
+  return op_constructor
+
 bracketed_expr_parser = do
   opening_paren
   the_expr <- lambda_parser
   closing_paren
-  rest <- continuation_parser -- could be more args or the rest of an int expr
-  case rest of
-    None -> return the_expr
-    Just the_rest -> return $ the_rest the_expr
-
-continuation_parser = do
-  case optionalMaybe build_app_term of
-    Nothing -> do
-      -- IntExpr
-    Just app_term ->
-      
-
-int_expr_parser_top_level = do
-  int_expr <- try int_expr_parser
-  eof
-  return int_expr
-
-bracketed_int_expr_parser_top_level = do
-  bracketed_expr <- bracketed_int_expr_parser
-  eof
-  return bracketed_expr
-
--- bracketed_or_non_bracketed_int_expr_parser_top_level = do 
---   int_expr <- choice $ fmap try [ int_expr_parser_top_level
---                                 , bracketed_int_expr_parser_top_level
---                                 ]
---   return int_expr
+  return the_expr
 
 abs_parser_top_level = do
   abstraction <- abs_parser 
@@ -129,81 +158,30 @@ abs_parser = do
   abs_expr <- lambda_parser
   return $ Abstraction ident abs_expr
 
-continuation_term_parser = do 
-  continuation_term <- optionMaybe $ choice $ fmap try [ abs_parser
-                                                       , var_parser
-                                                       , bracketed_int_expr_parser
-                                                       , int_expr_parser
-                                                       ]
-  return continuation_term
-
 app_parser = do 
   lh_term <- app_term_parser
   spaces 
   rh_term <- app_term_parser
-  the_app_term <- build_app_term $ Application lh_term rh_term 
-  return the_app_term
+  let the_app_term = Application lh_term rh_term
+  rest <- continuation_parser the_app_term
+  return rest
   where
     app_term_parser = choice $ fmap try [ bracketed_expr_parser
                                         , abs_parser
                                         , var_parser
-                                        , bracketed_int_expr_parser
-                                        , int_expr_parser
+                                        , lit_parser
                                         ]
+    continuation_parser current_term = do  
+      spaces
+      next_app_term <- optionMaybe app_term_parser
+      case next_app_term of
+        Nothing -> return current_term
+        Just the_next_term -> continuation_parser (Application current_term the_next_term)
 
--- a (b c)  -> (a (b c))
--- a b c    -> ((a b) c)
--- (a b) c  -> ((a b) c)
-build_app_term curr_term = do
-  rest <- app_parser_rest
-  case rest of
-    Nothing -> return curr_term
-    Just rest_expr -> do
-      let new_curr_term = Application curr_term rest_expr
-      the_term <- build_app_term new_curr_term
-      return the_term
-
-app_parser_rest = do
-  spaces
-  rest_term <- continuation_term_parser
-  return rest_term
-
--- 1 + 1 + 1 + 1 -> (((1 + 1) + 1) + 1)
 int_lit_parser = do
   spaces
   the_number <- int
   return $ IntLiteral the_number
-
-int_var_parser = do
-  spaces
-  the_variable <- var_parser
-  return $ IntVar the_variable
-
-bracketed_int_expr_parser = do  
-  opening_paren
-  spaces
-  bracketed_term <- int_expr_parser
-  spaces
-  closing_paren
-  let unwrapped_bracketed_term = case bracketed_term of
-                                  IntExpr the_expr -> the_expr
-                                  otherwise -> error "Should have had in IntExpr."
-  int_expr <- build_int_expr unwrapped_bracketed_term
-  return $ IntExpr int_expr
-
-int_expr_parser = do
-  lh_term <- choice $ fmap try [int_var_parser, int_lit_parser]
-  int_expr <- build_int_expr lh_term
-  return $ IntExpr int_expr
-
-int_binop_parser = do
-  spaces
-  the_operator <- optionMaybe $ choice [ binary_plus_parser
-                                       , binary_minus_parser
-                                       , binary_star_parser
-                                       , binary_slash_parser
-                                       ]
-  return the_operator
 
 binary_minus_parser = char '-' >> return BinaryMinus
 binary_plus_parser = char '+' >> return BinaryPlus
@@ -211,28 +189,6 @@ binary_star_parser = char '*' >> return BinaryStar
 binary_slash_parser = char '/' >> return BinarySlash
 opening_paren = char '('
 closing_paren = char ')'
-
-int_expr_with_brackets_parser = do
-  spaces
-  the_expr <- bracketed_int_expr_parser
-  case the_expr of
-    IntExpr some_expr -> return some_expr
-    otherwise -> error "Should have had an IntExpr"
-
-build_int_expr current_expr = do
-  spaces
-  the_operator <- int_binop_parser
-  case the_operator of 
-    Nothing -> return current_expr
-    Just op_val -> do
-      rhs_lit <- choice $ fmap try [int_expr_with_brackets_parser, int_var_parser, int_lit_parser]
-      -- rhs_lit <- int_expr_with_brackets_parser
-      let constructor = case op_val of
-                          BinaryPlus  -> IntAdd
-                          BinaryMinus -> IntSub
-                          BinaryStar  -> IntMul
-                          BinarySlash -> IntDiv
-      build_int_expr $ constructor current_expr rhs_lit
 
 print_one_parsed_lambda :: String -> IO ()
 print_one_parsed_lambda src = do
@@ -249,6 +205,13 @@ main = do
             , "\\x. (2 + 3) * 4"
             , "\\x. (2 + 3) * (4 + 5)"
             , "(\\x. x) (\\x. x)"
+            , "1 + (2 * 3)"
+            , "(((1 + 2) * (3)))"
+            , "(\\x. (((1 + 2) * (3)))) 5"
+            , "(\\f. \\x. f x) (\\x. x + 1) 1"
+            , "(\\f. \\x. f + x) 11" 
+            , "(\\f. \\x. f + x) 1 2" 
+            , "(\\x. f + x) 1 2" 
             ]
   forM_ src (\src_i -> do
     putStrLn "Original Source: "
