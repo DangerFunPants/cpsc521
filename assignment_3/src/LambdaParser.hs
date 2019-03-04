@@ -34,6 +34,8 @@ data Lambda_Expr
   -- maybe...
   | Fix Lambda_Expr 
   | Let [Binding] Lambda_Expr
+  | Cons Lambda_Expr Lambda_Expr
+  | Nil
   deriving (Show, Eq)
 
 data Binding
@@ -68,6 +70,8 @@ reserved_keywords = [ "if"
                     , "false"
                     , "let"
                     , "in"
+                    , "cons"
+                    , "nil"
                     ]
 
 -- ****************************************************************************
@@ -246,8 +250,32 @@ literal_parser :: Parser Lambda_Expr
 literal_parser = do
   the_literal <- choice $ fmap try [ int_literal_parser
                                    , bool_literal_parser
+                                   , list_literal_parser
                                    ]
   return the_literal
+
+list_literal_parser = do
+  list_literal <- choice $ fmap try [cons_parser, nil_parser]
+  return list_literal
+
+cons_parser :: Parser Lambda_Expr
+cons_parser = do
+  cons_token_parser
+  spaces
+  first_expr <- list_element_parser
+  spaces
+  second_expr <- list_element_parser
+  return $ Cons first_expr second_expr
+  where
+    list_element_parser = do
+      expr <- choice $ fmap try [ bracketed_expression_parser
+                                , literal_parser
+                                , var_parser
+                                ]
+      return expr
+
+nil_parser :: Parser Lambda_Expr
+nil_parser = nil_token_parser >> return Nil
 
 -- ****************************************************************************
 --                          Helpers and Leaves                        
@@ -314,6 +342,12 @@ in_token_parser = string "in" >> return ()
 let_binding_separator :: Parser ()
 let_binding_separator = char ';' >> return ()
 
+cons_token_parser :: Parser ()
+cons_token_parser = string "cons" >> return ()
+
+nil_token_parser :: Parser ()
+nil_token_parser = string "nil" >> return ()
+
 -- ****************************************************************************
 --                          Exported Functions
 -- ****************************************************************************
@@ -352,6 +386,9 @@ main = do
             , "let add = \\x. \\y. x + y in add 1 2"
             , "(\\x. \\y. let add = \\a. \\b. a + b in add x y) 1 2"
             , "let add = \\x. \\y. x + y; sub = \\x. \\y. x - y; a = 5; b = 2 in (add a a) - (add b b)"
+            , "cons (0 + 1) (cons (0 + 2) (cons (0 + 3) nil))"
+            , "cons (\\x. \\y. x + y) nil"
+            , "\\x. let lst = cons 1 nil in lst"
             ]
   forM_ src (\src_i -> do
     putStrLn "Original Source: "

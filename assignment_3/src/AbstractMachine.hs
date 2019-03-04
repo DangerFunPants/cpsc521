@@ -542,6 +542,7 @@ main = do
               , "(\\x. x) 5"
               , "let x = 10; y = 20 in x - y"
               , "let add = \\x. \\y. x + y; sub = \\x. \\y. x - y; a = 20; b = 40 in sub a b"
+              , "nil"
               ]
   execute_tests tests
 
