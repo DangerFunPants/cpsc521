@@ -48,6 +48,11 @@ data BinaryOperator
   | BinaryEquality
   deriving (Show, Eq)
 
+-- ParsecT s u m a
+-- s: stream input type
+-- u: user state
+-- m: next monad in the stack
+-- a: output type
 type Parser a = ParsecT String () Identity a
 
 -- ****************************************************************************
@@ -97,12 +102,12 @@ let_binding_parser :: Parser Lambda_Expr
 let_binding_parser = do
   let_token_parser
   spaces
-  binding <- binding_parser 
+  bindings <- binding_parser 
   spaces
   in_token_parser
   spaces
   expression <- lambda_parser
-  return $ Let [binding] expression
+  return $ Let bindings expression
   where
     binding_parser = do
       name <- ident_parser
@@ -110,7 +115,14 @@ let_binding_parser = do
       binary_equality_parser
       spaces
       expr_to_bind <- lambda_parser
-      return $ Binding name expr_to_bind
+      more_bindings <- more_bindings_parser
+      return $ (Binding name expr_to_bind) : more_bindings
+    more_bindings_parser = do
+      maybe_separator <- optionMaybe let_binding_separator
+      spaces
+      case maybe_separator of
+        Nothing -> return []
+        (Just _) -> binding_parser
 
 fix_parser :: Parser Lambda_Expr
 fix_parser = do
@@ -298,6 +310,9 @@ let_token_parser = string "let" >> return ()
 in_token_parser :: Parser ()
 in_token_parser = string "in" >> return ()
 
+let_binding_separator :: Parser ()
+let_binding_separator = char ';' >> return ()
+
 -- ****************************************************************************
 --                          Exported Functions
 -- ****************************************************************************
@@ -335,6 +350,7 @@ main = do
             , "if (\\x. true) 5 then 1 + 1 * 2 else (2 + 3)"
             , "let add = \\x. \\y. x + y in add 1 2"
             , "(\\x. \\y. let add = \\a. \\b. a + b in add x y) 1 2"
+            , "let add = \\x. \\y. x + y; sub = \\x. \\y. x - y; a = 5; b = 2 in (add a a) - (add b b)"
             ]
   forM_ src (\src_i -> do
     putStrLn "Original Source: "
