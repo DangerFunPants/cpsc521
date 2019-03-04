@@ -8,6 +8,10 @@ import Text.Show.Pretty
 import Control.Monad
 import Data.Functor.Identity (Identity)
 
+
+-- ****************************************************************************
+--                               Data Structures
+-- ****************************************************************************
 data Lambda_Expr
   = Var String
   | Abstraction String Lambda_Expr
@@ -31,10 +35,19 @@ data BinaryOperator
 type Parser a = ParsecT String () Identity a
 
 -- ****************************************************************************
+--                                Reserved Keywords
+-- ****************************************************************************
+reserved_keywords :: [String]
+reserved_keywords = [ "if"
+                    , "then"
+                    , "else"
+                    , "true"
+                    , "false"
+                    ]
+
+-- ****************************************************************************
 --                                Top Level Parser
 -- ****************************************************************************
-
--- ParsecT s u m a
 top_level_lambda_parser :: Parser Lambda_Expr
 top_level_lambda_parser = do
   expr <- lambda_parser
@@ -46,7 +59,8 @@ top_level_lambda_parser = do
 -- ****************************************************************************
 lambda_parser :: Parser Lambda_Expr
 lambda_parser = do  
-  expr <- choice $ fmap try [ app_parser
+  expr <- choice $ fmap try [ conditional_parser
+                            , app_parser
                             , binary_expression_parser
                             , bracketed_expression_parser
                             , abs_parser
@@ -58,6 +72,22 @@ lambda_parser = do
 -- ****************************************************************************
 --                              Sub Expression Parsers
 -- ****************************************************************************
+conditional_parser :: Parser Lambda_Expr
+conditional_parser = do
+  if_token_parser
+  spaces
+  predicate <- lambda_parser
+  spaces
+  then_token_parser
+  spaces
+  then_clause <- lambda_parser
+  spaces
+  else_token_parser
+  spaces
+  else_clause <- lambda_parser
+  spaces
+  return $ Conditional predicate then_clause else_clause
+
 app_parser :: Parser Lambda_Expr
 app_parser = do 
   lh_term <- app_term_parser
@@ -66,7 +96,8 @@ app_parser = do
   let the_app_term = Application lh_term rh_term
   continuation_parser the_app_term
   where
-    app_term_parser = choice $ fmap try [ bracketed_expression_parser
+    app_term_parser = choice $ fmap try [ conditional_parser
+                                        , bracketed_expression_parser
                                         , abs_parser
                                         , literal_parser
                                         , var_parser
@@ -91,7 +122,8 @@ binary_expression_parser = do
   continuation_parser this_expression
   where
     binary_expression_term_parser = do  
-      expr <- choice $ fmap try [ bracketed_expression_parser
+      expr <- choice $ fmap try [ conditional_parser
+                                , bracketed_expression_parser
                                 , abs_parser
                                 , app_parser
                                 , literal_parser
@@ -153,7 +185,11 @@ literal_parser = do
 --                          Helpers and Leaves                        
 -- ****************************************************************************
 ident_parser :: Parser String
-ident_parser = many1 letter
+ident_parser = do
+  the_ident <- many1 letter
+  if not $ the_ident `elem` reserved_keywords
+    then return the_ident
+    else parserZero
 
 int_literal_parser :: Parser Lambda_Expr
 int_literal_parser = int >>= \v -> return $ IntLiteral v
@@ -183,6 +219,15 @@ opening_paren = char '(' >> return ()
 closing_paren :: Parser ()
 closing_paren = char ')' >> return ()
 
+if_token_parser :: Parser ()
+if_token_parser = string "if" >> return ()
+
+then_token_parser :: Parser ()
+then_token_parser = string "then" >> return ()
+
+else_token_parser :: Parser ()
+else_token_parser = string "else" >> return ()
+
 -- ****************************************************************************
 --                          Exported Functions
 -- ****************************************************************************
@@ -203,44 +248,28 @@ print_one_parsed_lambda src = do
     Right ast -> putStrLn $ ppShow ast
 
 main :: IO ()
--- main = do
---   let src = [ "\\x. (1 + 2 * 3 / 4) 5"
---             , "\\x. 1 + 2 * 3 / 4 5"
---             , "\\x. 4 * (2 + 3)"
---             , "\\x. 4 * 2 + 3"
---             , "\\x. (2 + 3) * 4"
---             , "\\x. (2 + 3) * (4 + 5)"
---             , "(\\x. x) (\\x. x)"
---             , "1 + (2 * 3)"
---             , "(((1 + 2) * (3)))"
---             , "(\\x. (((1 + 2) * (3)))) 5"
---             , "(\\f. \\x. f x) (\\x. x + 1) 1"
---             , "(\\f. \\x. f + x) 11" 
---             , "(\\f. \\x. f + x) 1 2" 
---             , "(\\x. f + x) 1 2" 
---             ]
---   forM_ src (\src_i -> do
---     putStrLn "Original Source: "
---     putStrLn $ src_i ++ "\n"
--- 
---     putStrLn $ "Parsed Source: "
---     print_one_parsed_lambda src_i
---     putStrLn "\n\n")
+main = do
+  let src = [ "\\x. (1 + 2 * 3 / 4) 5"
+            , "\\x. 1 + 2 * 3 / 4 5"
+            , "\\x. 4 * (2 + 3)"
+            , "\\x. 4 * 2 + 3"
+            , "\\x. (2 + 3) * 4"
+            , "\\x. (2 + 3) * (4 + 5)"
+            , "(\\x. x) (\\x. x)"
+            , "1 + (2 * 3)"
+            , "(((1 + 2) * (3)))"
+            , "(\\x. (((1 + 2) * (3)))) 5"
+            , "(\\f. \\x. f x) (\\x. x + 1) 1"
+            , "(\\f. \\x. f + x) 11" 
+            , "(\\f. \\x. f + x) 1 2" 
+            , "(\\x. f + x) 1 2" 
+            , "if (\\x. True) 5 then 1 + 1 * 2 else (2 + 3)"
+            ]
+  forM_ src (\src_i -> do
+    putStrLn "Original Source: "
+    putStrLn $ src_i ++ "\n"
 
-main = let src =  "true" in putStrLn src >> print_one_parsed_lambda src
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+    putStrLn $ "Parsed Source: "
+    print_one_parsed_lambda src_i
+    putStrLn "\n\n")
 
