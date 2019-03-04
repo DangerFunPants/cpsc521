@@ -136,65 +136,6 @@ pushToCode iList = lift $ StateT $ \s ->
     let new = (over code (iList++)) s
     in return ((), new)
 
-stepMachine :: I.SECDInstruction -> StackState ()
--- Boolean Instructions
-stepMachine (I.True) = pushStackItem (S.BVal True)
-stepMachine (I.False) = pushStackItem (S.BVal False)
-stepMachine (I.IfThenElse _ _) = do
-    c <- popStackItem
-    ifC <- popStackItem
-    elseC <- popStackItem
-    case c of
-        (S.BVal t) -> do
-            if t
-                then pushStackItem ifC
-                else pushStackItem elseC
-        otherwise -> throwE $ "Expected boolean, got: " ++ (show c)
-
--- Arithmetic Instructions
-stepMachine (I.Const i) = pushStackItem (S.IVal i)
-stepMachine (I.Add) = do
-    s1 <- popStackItem
-    s2 <- popStackItem
-    result <- arithmeticOp s1 s2 (+)
-    pushStackItem result
-stepMachine (I.Mul) = do
-    s1 <- popStackItem
-    s2 <- popStackItem
-    result <- arithmeticOp s1 s2 (*)
-    pushStackItem result
-stepMachine (I.LEq) = do
-    s1 <- popStackItem
-    s2 <- popStackItem
-    result <- intToBooleanOp s1 s2 (<=)
-    pushStackItem result
-
--- Function Calls and Variable Access
-stepMachine (I.App) = do
-    closure <- popStackItem
-    case closure of
-        S.Closure iList env -> do
-            arg <- popStackItem
-            pushToEnv arg
-            pushToCode iList
-        S.FixClosure instr_list env -> do
-          old_code <- get_code
-          old_env <- get_env
-          let new_closure = S.Closure old_code old_env
-          arg <- popStackItem
-          set_code instr_list
-          set_env $ arg : ((S.FixClosure instr_list env) : env)
-          pushStackItem new_closure
-        otherwise -> throwE $ "Expected a closure and got: " ++ (show closure)
-    
-stepMachine (I.Access offset) = do
-  if offset > 0
-    then throwE $ "Offset was large: " ++ (show offset)
-    else (lookupEnv offset) >>= pushStackItem
-stepMachine (I.Ret) = popEnv
-stepMachine (I.Closure iList) = do
-    pushStackItem $ S.Closure iList []
-
 arithmeticOp :: S.StackItem 
              -> S.StackItem 
              -> (Int -> Int -> Int) 
@@ -217,23 +158,12 @@ intToBooleanOp i j _ = throwE $
     ++ "on non integer arguments: " ++ (show i)
     ++ " and "
     ++ (show j)
-    
-execute :: StackState ()
-execute = do
-    nextI <- getNextInstruction
-    stepMachine nextI
-    execute
 
 execute_dbg :: StackState ()
 execute_dbg = do
   next_instr <- getNextInstruction
   step_machine_dbg next_instr
   execute_dbg
-
-execCode :: [I.SECDInstruction] -> (Either String (), StateType)
-execCode code = (runIdentity . stateFun . runExceptT) execute
-    where
-        stateFun = (flip runStateT) (StateType code [] [] [])
 
 exec_code_dbg :: [I.SECDInstruction] -> (Either String (), StateType)
 exec_code_dbg code = (runIdentity . stateFun . runExceptT) execute_dbg
@@ -506,7 +436,7 @@ parseAndExecuteLambda source = do
     compilationResult <- case compile parseResult of
                             (Left err)         -> Left $ "Failed to compile code: " ++ (show err)
                             (Right compResult) -> Right compResult
-    return $ execCode compilationResult
+    return $ exec_code_dbg compilationResult
 
 show_debug_information :: String -> IO ()
 show_debug_information src = do 
