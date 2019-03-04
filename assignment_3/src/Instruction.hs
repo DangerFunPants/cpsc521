@@ -21,7 +21,7 @@ data SECDInstruction
  -- List Instructions
  | Cons
  | Nil
- | Case
+ | Case [SECDInstruction] [SECDInstruction]
  -- Let Bindings
  | LetBinding [SECDInstruction]
  | AppLet Int

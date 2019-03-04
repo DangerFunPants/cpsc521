@@ -36,6 +36,7 @@ data Lambda_Expr
   | Let [Binding] Lambda_Expr
   | Cons Lambda_Expr Lambda_Expr
   | Nil
+  | Case Lambda_Expr Lambda_Expr Lambda_Expr
   deriving (Show, Eq)
 
 data Binding
@@ -72,6 +73,7 @@ reserved_keywords = [ "if"
                     , "in"
                     , "cons"
                     , "nil"
+                    , "case"
                     ]
 
 -- ****************************************************************************
@@ -88,7 +90,8 @@ top_level_lambda_parser = do
 -- ****************************************************************************
 lambda_parser :: Parser Lambda_Expr
 lambda_parser = do  
-  expr <- choice $ fmap try [ let_binding_parser
+  expr <- choice $ fmap try [ case_expression_parser
+                            , let_binding_parser
                             , fix_parser
                             , conditional_parser
                             , app_parser
@@ -103,6 +106,19 @@ lambda_parser = do
 -- ****************************************************************************
 --                              Sub Expression Parsers
 -- ****************************************************************************
+case_expression_parser :: Parser Lambda_Expr
+case_expression_parser = do 
+  case_token_parser
+  spaces
+  predicate_expression <- case_branch_parser
+  spaces
+  nil_case <- case_branch_parser
+  spaces
+  cons_case <- case_branch_parser
+  return $ Case predicate_expression nil_case cons_case
+  where
+    case_branch_parser = bracketed_expression_parser
+
 let_binding_parser :: Parser Lambda_Expr
 let_binding_parser = do
   let_token_parser
@@ -348,6 +364,9 @@ cons_token_parser = string "cons" >> return ()
 nil_token_parser :: Parser ()
 nil_token_parser = string "nil" >> return ()
 
+case_token_parser :: Parser ()
+case_token_parser = string "case" >> return ()
+
 -- ****************************************************************************
 --                          Exported Functions
 -- ****************************************************************************
@@ -389,6 +408,8 @@ main = do
             , "cons (0 + 1) (cons (0 + 2) (cons (0 + 3) nil))"
             , "cons (\\x. \\y. x + y) nil"
             , "\\x. let lst = cons 1 nil in lst"
+            , "case (cons 5 nil) (\\x. 5) (\\y. 5)"
+            , "let v = cons 5 nil in case (v) (\\x. head) (\\y. 5)"
             ]
   forM_ src (\src_i -> do
     putStrLn "Original Source: "

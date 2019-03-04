@@ -1,7 +1,10 @@
 
 {-# LANGUAGE TemplateHaskell #-}
 
-module AbstractMachine where
+module AbstractMachine 
+  ( execute_lambda_and_show_state
+  , parse_and_compile
+  ) where
 
 import Control.Lens
 import Control.Monad.Trans.State
@@ -90,9 +93,13 @@ popIList = lift $ StateT $ \s ->
         in return ((), new)
 
 lookupEnv :: Int -> StackState S.StackItem
-lookupEnv i = lift $ StateT $ \s ->
-    let eVal = (s^.env) !! i
-    in return (eVal, s)
+lookupEnv env_index = do
+  current_env <- get_env
+  if env_index < (length current_env) 
+    then return $ current_env !! env_index
+    else throwE $ "Index: " ++ (show env_index) 
+                            ++ " too large for environment " 
+                            ++ (show current_env)
 
 pushToEnv :: S.StackItem -> StackState ()
 pushToEnv e = lift $ StateT $ \s ->
@@ -310,6 +317,25 @@ deBruijn (L.Let bindings expr) = do
       return $ expr_code ++ rec_call
     create_bindings [] = return []
 
+deBruijn L.Nil = return [I.Nil]
+
+deBruijn (L.Cons expr_head expr_rest) = do
+  compile_rest <- deBruijn expr_rest
+  compile_head <- deBruijn expr_head
+  return $ compile_rest ++ compile_head ++ [I.Cons]
+
+deBruijn (L.Case expr nil_branch cons_branch) = do
+  expr_code <- deBruijn expr
+  nil_code <- deBruijn nil_branch
+  ST.addLevel
+  ST.insertSym "tail" "var"
+  ST.addLevel
+  ST.insertSym "head" "var"
+  cons_code <- deBruijn cons_branch
+  ST.remLevel
+  ST.remLevel
+  return $ expr_code ++ [I.Case (nil_code ++ [I.Ret]) (cons_code ++ [I.Ret])]
+
 step_machine_dbg :: I.SECDInstruction -> StackState ()
 step_machine_dbg (I.True) = pushStackItem (S.BVal True) >> add_to_debug_history
 step_machine_dbg (I.False) = pushStackItem (S.BVal False) >> add_to_debug_history
@@ -445,6 +471,28 @@ step_machine_dbg (I.AppLet num_bindings) = do
       pushStackItem new_closure
     otherwise -> throwE $ "Expected closure got: " ++ (show let_binding)
 
+step_machine_dbg I.Nil = pushStackItem S.Nil
+
+step_machine_dbg I.Cons = do
+  [e1, e2] <- pop_n_stack_items 2
+  let new_stack_item = S.Cons e1 e2
+  pushStackItem new_stack_item
+  
+step_machine_dbg (I.Case nil_branch cons_branch) = do
+  next_stack_item <- popStackItem
+  old_env <- get_env
+  old_code <- get_code
+  let new_closure = S.Closure old_code old_env
+  pushStackItem new_closure
+  case next_stack_item of
+    S.Nil -> do
+      set_code nil_branch
+    (S.Cons e1 e2) -> do
+      let new_env = e1 : (e2 : old_env)
+      set_env new_env
+      set_code cons_branch
+  
+
 compile :: L.Lambda_Expr -> Either String [I.SECDInstruction]
 compile ast = fst $ (runIdentity . ((flip runStateT) ST.mkInitState) . runExceptT) (deBruijn ast)
 
@@ -521,16 +569,8 @@ execute_tests lambdas = do
         putStrLn $ (ppShow exec_state) ++ "\n"
         putStrLn $ "********************************************************************************")
 
-parse_and_compile :: [String] -> IO ()
-parse_and_compile lambdas = do
-  forM_ lambdas (\lambda_i -> do
-    case L.parse_lambda lambda_i of
-      Left err -> error err
-      Right ast -> do
-        case compile ast of
-          Left err -> error err
-          Right compiled_code ->
-            putStrLn $ ppShow compiled_code)
+parse_and_compile :: String -> Either String [I.SECDInstruction]
+parse_and_compile lambda = L.parse_lambda lambda >>= compile
 
 main :: IO ()
 main = do
@@ -542,7 +582,8 @@ main = do
               , "(\\x. x) 5"
               , "let x = 10; y = 20 in x - y"
               , "let add = \\x. \\y. x + y; sub = \\x. \\y. x - y; a = 20; b = 40 in sub a b"
-              , "nil"
+              , "(\\x. case (x) (1) (2)) (cons 1 (cons 2 (cons 3 nil)))"
+              , "let list = cons 1 (cons 2 (cons 3 nil)) in case (list) ((\\x. x) 10) (tail)"
               ]
   execute_tests tests
 
