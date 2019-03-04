@@ -1,6 +1,7 @@
 module LambdaParser 
   ( parse_lambda
   , Lambda_Expr (..)
+  , Binding (..)
   ) where
 
 import Text.Parsec.Char

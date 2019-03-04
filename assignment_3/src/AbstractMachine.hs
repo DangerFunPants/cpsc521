@@ -51,6 +51,20 @@ popStackItem = do
         then throwE "Attempt to pop empty stack"
         else popStackItem' >> (return $ head s)
 
+pop_n_stack_items :: Int -> StackState [S.StackItem]
+pop_n_stack_items n = do
+  s <- getStack
+  if (length s) < n
+    then throwE $ "Attempted to remove " ++ (show n) ++ "Items from stack but there was only " ++ (show $ length s)
+    else do
+      remove_n_stack_items n
+      return $ take n s
+
+remove_n_stack_items :: Int -> StackState ()
+remove_n_stack_items n = lift $ StateT $ \s ->
+  let new_stack = over stack (drop n) s
+  in return ((), new_stack)
+
 getStack :: StackState [S.StackItem]
 getStack = lift $ StateT $ \s ->
     let v = s^.stack
@@ -282,6 +296,19 @@ deBruijn (L.Equal t1 t2) = do
   t1' <- deBruijn t1
   t2' <- deBruijn t2
   return $ t1' ++ t2' ++ [I.Eq]
+deBruijn (L.Let bindings expr) = do
+  let_bindings <- create_bindings bindings
+  expr_code <- deBruijn expr
+  forM_ [1..(length bindings)] (\_ -> ST.remLevel)
+  return $ let_bindings ++ [I.LetBinding (expr_code ++ [I.Ret])] ++ [I.AppLet (length bindings)]
+  where
+    create_bindings ((L.Binding name expr):rest) = do
+      ST.addLevel
+      ST.insertSym name "var"
+      expr_code <- deBruijn expr
+      rec_call <- create_bindings rest
+      return $ expr_code ++ rec_call
+    create_bindings [] = return []
 
 step_machine_dbg :: I.SECDInstruction -> StackState ()
 step_machine_dbg (I.True) = pushStackItem (S.BVal True) >> add_to_debug_history
@@ -399,6 +426,25 @@ step_machine_dbg (I.Fix instr_list) = do
   pushStackItem the_closure
   add_to_debug_history
 
+step_machine_dbg (I.LetBinding expr_code) = do
+  current_env <- get_env
+  let new_closure = S.Closure expr_code current_env
+  pushStackItem new_closure 
+
+step_machine_dbg (I.AppLet num_bindings) = do
+  let_binding <- popStackItem
+  case let_binding of
+    (S.Closure expr_code env) -> do 
+      old_code <- get_code
+      old_env <- get_env
+      let new_closure = S.Closure old_code old_env
+      binding_vals <- pop_n_stack_items num_bindings
+      let the_new_env = binding_vals ++ env
+      set_env the_new_env
+      set_code expr_code
+      pushStackItem new_closure
+    otherwise -> throwE $ "Expected closure got: " ++ (show let_binding)
+
 compile :: L.Lambda_Expr -> Either String [I.SECDInstruction]
 compile ast = fst $ (runIdentity . ((flip runStateT) ST.mkInitState) . runExceptT) (deBruijn ast)
 
@@ -493,6 +539,9 @@ main = do
               , "(\\add. \\x. \\y. \\z. 10*add x y z) (\\a. \\b. \\c. a + b + c) 3 2 1"
               , "(fix (\\fact. \\n. if n = 1 then 1 else n * (fact (n - 1)))) 5"
               , "(fix (\\fib. \\n. if n < 2 then 1 else (fib (n - 1)) + (fib (n - 2)))) 8"
+              , "(\\x. x) 5"
+              , "let x = 10; y = 20 in x - y"
+              , "let add = \\x. \\y. x + y; sub = \\x. \\y. x - y; a = 20; b = 40 in sub a b"
               ]
   execute_tests tests
 

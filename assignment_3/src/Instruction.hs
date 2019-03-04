@@ -22,4 +22,7 @@ data SECDInstruction
  | Cons
  | Nil
  | Case
+ -- Let Bindings
+ | LetBinding [SECDInstruction]
+ | AppLet Int
  deriving (Show, Eq)
