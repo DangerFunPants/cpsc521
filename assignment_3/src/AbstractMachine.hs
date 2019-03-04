@@ -4,6 +4,8 @@
 module AbstractMachine 
   ( execute_lambda_and_show_state
   , parse_and_compile
+  , StateType (..)
+  , mk_state_for_dbg_execution
   ) where
 
 import Control.Lens
@@ -18,6 +20,9 @@ import qualified StackItem      as S
 import qualified LambdaParser   as L
 import qualified SymbolTable    as ST
 
+-- ****************************************************************************
+--                        Execution State Type
+-- ****************************************************************************
 data StateType = StateType
     { _code             :: [ I.SECDInstruction ]
     , _env              :: [ S.StackItem ]
@@ -30,6 +35,9 @@ makeLenses ''StateType
 
 type StackState = ExceptT String (StateT StateType Identity)
 
+-- ****************************************************************************
+--                        State Manipulation
+-- ****************************************************************************
 pushStackItem :: S.StackItem -> StackState ()
 pushStackItem item = lift $ StateT $ \s -> 
     let new = (over stack (\st -> item:st)) s
@@ -136,6 +144,14 @@ pushToCode iList = lift $ StateT $ \s ->
     let new = (over code (iList++)) s
     in return ((), new)
 
+is_execution_complete :: StackState Bool
+is_execution_complete = do
+  the_code <- get_code
+  return $ null the_code 
+
+-- ****************************************************************************
+--                                Misc. Helpers
+-- ****************************************************************************
 arithmeticOp :: S.StackItem 
              -> S.StackItem 
              -> (Int -> Int -> Int) 
@@ -159,17 +175,42 @@ intToBooleanOp i j _ = throwE $
     ++ " and "
     ++ (show j)
 
-execute_dbg :: StackState ()
-execute_dbg = do
+-- ****************************************************************************
+--                                Code Execution 
+-- ****************************************************************************
+execute :: StackState ()
+execute = do
   next_instr <- getNextInstruction
   step_machine_dbg next_instr
-  execute_dbg
+  execute
 
-exec_code_dbg :: [I.SECDInstruction] -> (Either String (), StateType)
-exec_code_dbg code = (runIdentity . stateFun . runExceptT) execute_dbg
+exec_code :: [I.SECDInstruction] -> Either (String, StateType) StateType
+exec_code code = 
+  case the_either of
+    Left err -> Left (err, the_state)
+    Right () -> Right the_state
   where
     stateFun = (flip runStateT) (StateType code [] [] [StateType code [] [] []])
+    (the_either, the_state) = (runIdentity . stateFun . runExceptT) execute
 
+execute_dbg :: StackState ()
+execute_dbg = getNextInstruction >>= step_machine_dbg
+
+exec_code_dbg :: StateType -> Either (String, StateType) StateType
+exec_code_dbg input_state = 
+  case the_either of
+    Left err -> Left (err, the_state)
+    Right () -> Right the_state
+  where
+    state_fun = (flip runStateT) input_state
+    (the_either, the_state) = (runIdentity . state_fun . runExceptT) execute_dbg
+
+mk_state_for_dbg_execution :: [I.SECDInstruction] -> StateType
+mk_state_for_dbg_execution instrs = StateType instrs [] [] [StateType instrs [] [] []]
+
+-- ****************************************************************************
+--                            DeBruijn Compilation
+-- ****************************************************************************
 type DBState a = ExceptT String (ST.SymbolTableST String String) a
 
 deBruijn :: L.Lambda_Expr -> DBState [I.SECDInstruction]
@@ -266,6 +307,10 @@ deBruijn (L.Case expr nil_branch cons_branch) = do
   ST.remLevel
   return $ expr_code ++ [I.Case (nil_code ++ [I.Ret]) (cons_code ++ [I.Ret])]
 
+
+-- ****************************************************************************
+--                            SECD State Transitions
+-- ****************************************************************************
 step_machine_dbg :: I.SECDInstruction -> StackState ()
 step_machine_dbg (I.True) = pushStackItem (S.BVal True) >> add_to_debug_history
 step_machine_dbg (I.False) = pushStackItem (S.BVal False) >> add_to_debug_history
@@ -421,22 +466,20 @@ step_machine_dbg (I.Case nil_branch cons_branch) = do
       let new_env = e1 : (e2 : old_env)
       set_env new_env
       set_code cons_branch
-  
 
+ 
+-- ****************************************************************************
+--                              Public API 
+-- ****************************************************************************
 compile :: L.Lambda_Expr -> Either String [I.SECDInstruction]
 compile ast = fst $ (runIdentity . ((flip runStateT) ST.mkInitState) . runExceptT) (deBruijn ast)
 
--- parseAndExecuteLambda :: String -> Either (String ()) StateType
--- You can't use two functions returning eithers parameterized on a different
--- "Left" type since the function would have multiple return types.
-parseAndExecuteLambda source = do
-    parseResult <- case L.parse_lambda source of
-                        (Left err)   -> Left $ "Failed to parse Lambda.: " ++ (show err)
-                        (Right code) -> (Right code)
-    compilationResult <- case compile parseResult of
-                            (Left err)         -> Left $ "Failed to compile code: " ++ (show err)
-                            (Right compResult) -> Right compResult
-    return $ exec_code_dbg compilationResult
+parseAndExecuteLambda :: String -> Either String StateType
+parseAndExecuteLambda source = 
+  L.parse_lambda source >>= compile >>= \instrs ->
+    case exec_code instrs of
+      Left (err_msg, state) -> Left err_msg
+      Right state -> Right state
 
 show_debug_information :: String -> IO ()
 show_debug_information src = do 
@@ -450,7 +493,7 @@ show_debug_information src = do
     (Right instrs) -> do
       putStrLn $ ppShow instrs
       putStrLn $ "Execution Result: "
-      putStrLn $ ppShow $ exec_code_dbg instrs
+      putStrLn $ ppShow $ exec_code instrs
 
 execute_lambda_and_show_state 
   :: String 
@@ -463,12 +506,12 @@ execute_lambda_and_show_state src enable_dbg = do
       case compile ast of
         ((Left err_msg)) -> Left $ show err_msg
         ((Right instrs)) -> do
-          case exec_code_dbg instrs of
-            ((Left error), exec_state) -> do
+          case exec_code instrs of
+            (Left (error, exec_state)) -> do
               if enable_dbg
                 then return $ (ast, instrs, exec_state, error)
                 else return $ (ast, instrs, (set dbg_history [] exec_state), error)
-            ((Right ()), exec_state) -> do
+            (Right exec_state) -> do
               if enable_dbg
                 then return $ (ast, instrs, exec_state, "No Errors.")
                 else return $ (ast, instrs, (set dbg_history [] exec_state), "No Errors.")
