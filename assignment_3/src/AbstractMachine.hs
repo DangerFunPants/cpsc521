@@ -236,6 +236,7 @@ deBruijn (L.Abstraction arg term) = do
     ST.remLevel
     return $ [I.Closure (body ++ [I.Ret])]
 
+-- @Todo: I think this will only support two-argument recursive functions currently.
 deBruijn (L.Fix instr_list) = do  
   case instr_list of
     L.Abstraction func_name code -> do
@@ -255,11 +256,11 @@ deBruijn (L.Fix instr_list) = do
 deBruijn (L.Application t1 t2) = do
     t1' <- deBruijn t1
     t2' <- deBruijn t2
-    return $ t2' ++ t1' ++ [ I.App ]
+    return $ t2' ++ t1' ++ [I.App]
 deBruijn (L.Add t1 t2) = do
     t1' <- deBruijn t1
     t2' <- deBruijn t2
-    return $ t1' ++ t2' ++ [ I.Add ]
+    return $ t1' ++ t2' ++ [I.Add]
 deBruijn (L.Sub t1 t2) = do
   t1' <- deBruijn t1
   t2' <- deBruijn t2
@@ -267,7 +268,7 @@ deBruijn (L.Sub t1 t2) = do
 deBruijn (L.Mul t1 t2) = do
     t1' <- deBruijn t1
     t2' <- deBruijn t2
-    return $ t1' ++ t2' ++ [ I.Mul ]
+    return $ t1' ++ t2' ++ [I.Mul]
 deBruijn (L.Conditional cond ifC elseC) = do
     cond' <- deBruijn cond
     ifC'  <- deBruijn ifC
@@ -276,7 +277,7 @@ deBruijn (L.Conditional cond ifC elseC) = do
 deBruijn (L.LessThan t1 t2) = do
     t1' <- deBruijn t1
     t2' <- deBruijn t2
-    return $ t1' ++ t2' ++ [ I.LEq ]
+    return $ t1' ++ t2' ++ [I.LEq]
 deBruijn (L.Equal t1 t2) = do
   t1' <- deBruijn t1
   t2' <- deBruijn t2
@@ -392,17 +393,13 @@ step_machine_dbg (I.Closure i_list) = do
   pushStackItem $ S.Closure i_list current_env
   add_to_debug_history
 
--- fix v -> v (fix v)
 step_machine_dbg (I.Fix instr_list) = do
   current_env <- get_env
   let the_closure = S.FixClosure instr_list current_env
   pushStackItem the_closure
   add_to_debug_history
 
--- compile :: L.Lambda_Expr
---         -> ( Either String [I.SECDInstruction]
---            , SymbolTable.SymbolTableT String String
---            )
+compile :: L.Lambda_Expr -> Either String [I.SECDInstruction]
 compile ast = fst $ (runIdentity . ((flip runStateT) ST.mkInitState) . runExceptT) (deBruijn ast)
 
 -- parseAndExecuteLambda :: String -> Either (String ()) StateType
@@ -431,7 +428,10 @@ show_debug_information src = do
       putStrLn $ "Execution Result: "
       putStrLn $ ppShow $ exec_code_dbg instrs
 
-execute_lambda_and_show_state :: String -> Bool -> Either String (L.Lambda_Expr, [I.SECDInstruction], StateType, String) 
+execute_lambda_and_show_state 
+  :: String 
+  -> Bool 
+  -> Either String (L.Lambda_Expr, [I.SECDInstruction], StateType, String) 
 execute_lambda_and_show_state src enable_dbg = do
   case L.parse_lambda src of
     (Left err_msg) -> Left $ show err_msg
@@ -495,9 +495,6 @@ main = do
               , "(fix (\\fib. \\n. if n < 2 then 1 else (fib (n - 1)) + (fib (n - 2)))) 8"
               ]
   execute_tests tests
-  -- let src = ["(fix (\\fact. \\n. if n = 1 then 1 else n * (fact (n - 1)))) 10"]
-  -- parse_and_compile src
-  -- execute_tests src
 
 
 

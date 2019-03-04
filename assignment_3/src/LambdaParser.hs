@@ -32,6 +32,11 @@ data Lambda_Expr
   -- One day I'll understand what that means.
   -- maybe...
   | Fix Lambda_Expr 
+  | Let [Binding] Lambda_Expr
+  deriving (Show, Eq)
+
+data Binding
+  = Binding Name Lambda_Expr
   deriving (Show, Eq)
 
 data BinaryOperator
@@ -48,12 +53,15 @@ type Parser a = ParsecT String () Identity a
 -- ****************************************************************************
 --                                Reserved Keywords
 -- ****************************************************************************
+-- None of the reserved keywords can be used in identifiers.
 reserved_keywords :: [String]
 reserved_keywords = [ "if"
                     , "then"
                     , "else"
                     , "true"
                     , "false"
+                    , "let"
+                    , "in"
                     ]
 
 -- ****************************************************************************
@@ -70,7 +78,8 @@ top_level_lambda_parser = do
 -- ****************************************************************************
 lambda_parser :: Parser Lambda_Expr
 lambda_parser = do  
-  expr <- choice $ fmap try [ fix_parser
+  expr <- choice $ fmap try [ let_binding_parser
+                            , fix_parser
                             , conditional_parser
                             , app_parser
                             , binary_expression_parser
@@ -84,6 +93,25 @@ lambda_parser = do
 -- ****************************************************************************
 --                              Sub Expression Parsers
 -- ****************************************************************************
+let_binding_parser :: Parser Lambda_Expr
+let_binding_parser = do
+  let_token_parser
+  spaces
+  binding <- binding_parser 
+  spaces
+  in_token_parser
+  spaces
+  expression <- lambda_parser
+  return $ Let [binding] expression
+  where
+    binding_parser = do
+      name <- ident_parser
+      spaces
+      binary_equality_parser
+      spaces
+      expr_to_bind <- lambda_parser
+      return $ Binding name expr_to_bind
+
 fix_parser :: Parser Lambda_Expr
 fix_parser = do
   fix_token_parser
@@ -262,6 +290,12 @@ else_token_parser = string "else" >> return ()
 fix_token_parser :: Parser ()
 fix_token_parser = string "fix" >> return ()
 
+let_token_parser :: Parser ()
+let_token_parser = string "let" >> return ()
+
+in_token_parser :: Parser ()
+in_token_parser = string "in" >> return ()
+
 -- ****************************************************************************
 --                          Exported Functions
 -- ****************************************************************************
@@ -297,6 +331,7 @@ main = do
             , "(\\f. \\x. f + x) 1 2" 
             , "(\\x. f + x) 1 2" 
             , "if (\\x. true) 5 then 1 + 1 * 2 else (2 + 3)"
+            , "let add = \\x. \\y. x + y in add 1 2"
             ]
   forM_ src (\src_i -> do
     putStrLn "Original Source: "
