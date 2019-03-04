@@ -1,7 +1,9 @@
 module Instruction (SECDInstruction (..)) where
 
 data SECDInstruction
- = Closure [SECDInstruction]
+ = Closure  [SECDInstruction]
+ | Fix      [SECDInstruction]
+ | FixC     [SECDInstruction]
  | App
  | Access Int
  | Ret

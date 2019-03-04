@@ -115,29 +115,29 @@ lookupSym' k = StateT $ \s ->
     let v = find k (s^.symbolTable)
     in return (v, s)
 
-lookupSym :: (Ord k) => k -> ExceptT String (SymbolTableST k v) v
+lookupSym :: (Show k, Ord k) => k -> ExceptT String (SymbolTableST k v) v
 lookupSym k = do
     s <- lift $ lookupSym' k
     case s of
         (Just v) -> return v
-        Nothing -> throwE $ "Failed to find symbol" 
+        Nothing -> throwE $ "Failed to find symbol: " ++ (show k)
 
 lookupDistance' :: (Ord k) => k -> (SymbolTableST k v) (Maybe Int)
 lookupDistance' k = StateT $ \s ->
     let d = distance k (s^.symbolTable)
     in return (d, s)
 
-lookupDistance :: (Ord k) => k -> ExceptT String (SymbolTableST k v) Int
+lookupDistance :: (Show k, Ord k) => k -> ExceptT String (SymbolTableST k v) Int
 lookupDistance k = do
     s <- lift $ lookupDistance' k
     case s of
         Just v -> return v
-        Nothing -> throwE $ "Symbol not present in table"
+        Nothing -> throwE $ "Symbol: " ++ (show k) ++ " not present in table"
 
 empty :: (Ord k) => ST k v
 empty = mkEmpty
 
-mkInitState :: (Ord k) => SymbolTableT k v
+mkInitState :: (Show k, Ord k) => SymbolTableT k v
 mkInitState = SymbolTableT mkEmpty 0 0
 
 

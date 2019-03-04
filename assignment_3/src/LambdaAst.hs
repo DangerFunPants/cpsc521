@@ -72,6 +72,7 @@ data Term
     | LessThan Term Term
     | Equal Term Term 
     | Cond Term Term Term
+    | Fix Term 
     deriving (Show, Eq)
 
 data LitT
@@ -79,7 +80,18 @@ data LitT
     | ILit Int
     deriving (Show, Eq)
 
-parseTerm = foldl (\a p -> a <|> p) termP2 (fmap try [ termP1, termP0, termP3, termP4, termP5 ])
+one_or_more_spaces = do
+  space
+  spaces
+  return $ ()
+
+parseTerm = foldl (\a p -> a <|> p) termP2 (fmap try [ termP6
+                                                     , termP1
+                                                     , termP0
+                                                     , termP3
+                                                     , termP4
+                                                     , termP5
+                                                     ])
 
 termP0 = do
     e <- parseIntExpr
@@ -131,6 +143,16 @@ termP5 = do
     case rest of 
         Nothing -> return t
         Just v -> return $ v t
+
+termP6 = do
+  char '('
+  spaces
+  string "fix"
+  one_or_more_spaces
+  the_abstraction <- parseTerm
+  spaces
+  char ')'
+  return $ Fix the_abstraction
 
 parseBExpr = choice [ bExprP0, bExprP1 ]
 bExprP0 = string "true" >> (return $ Literal (BLit True))

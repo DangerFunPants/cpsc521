@@ -14,5 +14,6 @@ data StackItem
     = IVal Int
     | BVal Bool
     | StackList
-    | Closure [I.SECDInstruction] [StackItem]
+    | Closure     [I.SECDInstruction] [StackItem]
+    | FixClosure  [I.SECDInstruction] [StackItem]
     deriving (Show, Eq)

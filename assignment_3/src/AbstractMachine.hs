@@ -156,7 +156,16 @@ stepMachine (I.App) = do
             arg <- popStackItem
             pushToEnv arg
             pushToCode iList
+        S.FixClosure instr_list env -> do
+          old_code <- get_code
+          old_env <- get_env
+          let new_closure = S.Closure old_code old_env
+          arg <- popStackItem
+          set_code instr_list
+          set_env $ arg : ((S.FixClosure instr_list env) : env)
+          pushStackItem new_closure
         otherwise -> throwE $ "Expected a closure and got: " ++ (show closure)
+    
 stepMachine (I.Access offset) = do
   if offset > 0
     then throwE $ "Offset was large: " ++ (show offset)
@@ -208,7 +217,7 @@ execCode code = (runIdentity . stateFun . runExceptT) execute
 exec_code_dbg :: [I.SECDInstruction] -> (Either String (), StateType)
 exec_code_dbg code = (runIdentity . stateFun . runExceptT) execute_dbg
   where
-    stateFun = (flip runStateT) (StateType code [] [] [])
+    stateFun = (flip runStateT) (StateType code [] [] [StateType code [] [] []])
 
 type DBState a = ExceptT String (ST.SymbolTableST String String) a
 
@@ -226,6 +235,10 @@ deBruijn (L.Abstraction arg term) = do
     body <- deBruijn term
     ST.remLevel
     return $ [ I.Closure (body ++ [I.Ret]) ]
+
+deBruijn (L.Fix instr_list) = do  
+  func_code <- deBruijn instr_list
+  return $ [I.Fix $ func_code ++ [I.Ret]]
 
 deBruijn (L.App t1 t2) = do
     t1' <- deBruijn t1
@@ -320,6 +333,7 @@ step_machine_dbg (I.App) = do
       set_code i_list
       set_env new_env
     otherwise -> throwE $ "Expected a closure. Found: " ++ (show closure)
+  add_to_debug_history
 
 step_machine_dbg (I.Access offset) = (lookupEnv offset) >>= pushStackItem >> add_to_debug_history
 
@@ -337,10 +351,18 @@ step_machine_dbg (I.Ret) = do
       set_code next_code 
       set_env next_env
       pushStackItem return_val
+  add_to_debug_history
 
 step_machine_dbg (I.Closure i_list) = do
   current_env <- get_env
   pushStackItem $ S.Closure i_list current_env
+  add_to_debug_history
+
+-- fix v -> v (fix v)
+step_machine_dbg (I.Fix instr_list) = do
+  current_env <- get_env
+  let the_closure = S.FixClosure instr_list current_env
+  pushStackItem the_closure
   add_to_debug_history
 
 -- compile :: L.Term
@@ -400,7 +422,7 @@ read_lambdas_from_file filePath = do
     return lambdas
 
 enable_dbg :: Bool
-enable_dbg = False
+enable_dbg = True
 
 read_and_execute_tests :: FilePath -> IO ()
 read_and_execute_tests path_to_lambdas = do 
@@ -422,7 +444,12 @@ read_and_execute_tests path_to_lambdas = do
 
 main :: IO ()
 main = do
-  read_and_execute_tests "test.lambda"
+  read_and_execute_tests "rec_test.lambda"
+  -- ls <- read_lambdas_from_file "rec_test.lambda"
+  -- let lam = head ls
+  --     parsed = L.parseLambda lam
+  -- putStrLn $ ppShow parsed
+
 
 
 
