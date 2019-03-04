@@ -12,7 +12,7 @@ import Text.Show.Pretty
 
 import qualified Instruction    as I
 import qualified StackItem      as S
-import qualified LambdaAst      as L
+import qualified LambdaParser   as L
 import qualified SymbolTable    as ST
 
 data StateType = StateType
@@ -119,7 +119,7 @@ stepMachine :: I.SECDInstruction -> StackState ()
 -- Boolean Instructions
 stepMachine (I.True) = pushStackItem (S.BVal True)
 stepMachine (I.False) = pushStackItem (S.BVal False)
-stepMachine (I.IfThenElse) = do
+stepMachine (I.IfThenElse _ _) = do
     c <- popStackItem
     ifC <- popStackItem
     elseC <- popStackItem
@@ -178,7 +178,7 @@ arithmeticOp :: S.StackItem
              -> S.StackItem 
              -> (Int -> Int -> Int) 
              -> StackState S.StackItem
-arithmeticOp (S.IVal i) (S.IVal j) op = return $ S.IVal (i `op` j)
+arithmeticOp (S.IVal i) (S.IVal j) op = return $ S.IVal (j `op` i)
 arithmeticOp i j _ = throwE $
     "Attempted to perform arithmetic operation "
     ++ "on non integer arguments: "
@@ -190,7 +190,7 @@ intToBooleanOp :: S.StackItem
                -> S.StackItem
                -> (Int -> Int -> Bool)
                -> StackState S.StackItem
-intToBooleanOp (S.IVal i) (S.IVal j) op = return $ S.BVal (i `op` j)
+intToBooleanOp (S.IVal i) (S.IVal j) op = return $ S.BVal (j `op` i)
 intToBooleanOp i j _ = throwE $ 
     "Attempted to perform arithmetic operation "
     ++ "on non integer arguments: " ++ (show i)
@@ -221,26 +221,38 @@ exec_code_dbg code = (runIdentity . stateFun . runExceptT) execute_dbg
 
 type DBState a = ExceptT String (ST.SymbolTableST String String) a
 
-deBruijn :: L.Term -> DBState [I.SECDInstruction]
+deBruijn :: L.Lambda_Expr -> DBState [I.SECDInstruction]
 deBruijn (L.Var v) = do
     dist <- ST.lookupDistance v
     return $ [ I.Access dist ]
 
-deBruijn (L.Literal (L.ILit i)) = return $ [ I.Const i ]  
-deBruijn (L.Literal (L.BLit b)) = return $ [ if b then I.True else I.False ]
+deBruijn (L.IntLiteral int_val)   = return $ [I.Const int_val]
+deBruijn (L.BoolLiteral bool_val) = return $ [if bool_val then I.True else I.False]
 
 deBruijn (L.Abstraction arg term) = do
     ST.addLevel
     ST.insertSym arg "var"
     body <- deBruijn term
     ST.remLevel
-    return $ [ I.Closure (body ++ [I.Ret]) ]
+    return $ [I.Closure (body ++ [I.Ret])]
 
 deBruijn (L.Fix instr_list) = do  
-  func_code <- deBruijn instr_list
-  return $ [I.Fix $ func_code ++ [I.Ret]]
+  case instr_list of
+    L.Abstraction func_name code -> do
+      ST.addLevel
+      ST.insertSym func_name "var"
+      case code of
+        L.Abstraction arg_name func_code -> do
+          ST.addLevel
+          ST.insertSym arg_name "var"
+          compiled_code <- deBruijn $ func_code
+          ST.remLevel
+          ST.remLevel
+          return [I.Fix $ compiled_code ++ [I.Ret]]
+        otherwise -> throwE $ "Expected a closure and got: " ++ (show code)
+    otherwise -> throwE $ "Expected a closure and got: " ++ (show instr_list)
 
-deBruijn (L.App t1 t2) = do
+deBruijn (L.Application t1 t2) = do
     t1' <- deBruijn t1
     t2' <- deBruijn t2
     return $ t2' ++ t1' ++ [ I.App ]
@@ -248,15 +260,19 @@ deBruijn (L.Add t1 t2) = do
     t1' <- deBruijn t1
     t2' <- deBruijn t2
     return $ t1' ++ t2' ++ [ I.Add ]
+deBruijn (L.Sub t1 t2) = do
+  t1' <- deBruijn t1
+  t2' <- deBruijn t2
+  return $ t1' ++ t2' ++ [I.Sub]
 deBruijn (L.Mul t1 t2) = do
     t1' <- deBruijn t1
     t2' <- deBruijn t2
     return $ t1' ++ t2' ++ [ I.Mul ]
-deBruijn (L.Cond cond ifC elseC) = do
+deBruijn (L.Conditional cond ifC elseC) = do
     cond' <- deBruijn cond
-    ifC' <- deBruijn ifC
+    ifC'  <- deBruijn ifC
     elseC' <- deBruijn elseC
-    return $ elseC' ++ ifC' ++ cond' ++ [ I.IfThenElse ]
+    return $ cond' ++ [I.IfThenElse (ifC'++[I.Ret]) (elseC'++[I.Ret])]
 deBruijn (L.LessThan t1 t2) = do
     t1' <- deBruijn t1
     t2' <- deBruijn t2
@@ -270,16 +286,19 @@ step_machine_dbg :: I.SECDInstruction -> StackState ()
 step_machine_dbg (I.True) = pushStackItem (S.BVal True) >> add_to_debug_history
 step_machine_dbg (I.False) = pushStackItem (S.BVal False) >> add_to_debug_history
 
-step_machine_dbg (I.IfThenElse) = do
-  c <- popStackItem
-  ifC <- popStackItem
-  elseC <- popStackItem
-  case c of
+step_machine_dbg (I.IfThenElse then_code else_code) = do
+  cond_value <- popStackItem
+  case cond_value of
     (S.BVal t) -> do
-      if t
-        then pushStackItem ifC
-        else pushStackItem elseC
-    otherwise -> throwE $ "Expected boolean, got: " ++ (show c)
+      let code_to_execute = if t
+                              then then_code
+                              else else_code
+      old_code <- get_code
+      old_env <- get_env
+      let new_closure = S.Closure old_code old_env
+      set_code code_to_execute
+      pushStackItem new_closure
+    otherwise -> throwE $ "Expected boolean, got: " ++ (show cond_value)
   add_to_debug_history
 
 step_machine_dbg (I.Const i) = pushStackItem (S.IVal i) >> add_to_debug_history
@@ -287,6 +306,13 @@ step_machine_dbg (I.Add) = do
   s1 <- popStackItem 
   s2 <- popStackItem
   result <- arithmeticOp s1 s2 (+)
+  pushStackItem result
+  add_to_debug_history
+
+step_machine_dbg (I.Sub) = do
+  s1 <- popStackItem
+  s2 <- popStackItem
+  result <- arithmeticOp s1 s2 (-)
   pushStackItem result
   add_to_debug_history
 
@@ -300,7 +326,7 @@ step_machine_dbg (I.Mul) = do
 step_machine_dbg (I.LEq) = do
   s1 <- popStackItem
   s2 <- popStackItem
-  result <- intToBooleanOp s1 s2 (<=)
+  result <- intToBooleanOp s1 s2 (<)
   pushStackItem result
   add_to_debug_history
 
@@ -332,6 +358,14 @@ step_machine_dbg (I.App) = do
       pushStackItem new_closure
       set_code i_list
       set_env new_env
+    S.FixClosure instr_list env -> do
+      old_code <- get_code
+      old_env <- get_env
+      let new_closure = S.Closure old_code old_env
+      arg <- popStackItem
+      set_code instr_list
+      set_env $ arg : ((S.FixClosure instr_list env) : env)
+      pushStackItem new_closure
     otherwise -> throwE $ "Expected a closure. Found: " ++ (show closure)
   add_to_debug_history
 
@@ -365,28 +399,28 @@ step_machine_dbg (I.Fix instr_list) = do
   pushStackItem the_closure
   add_to_debug_history
 
--- compile :: L.Term
+-- compile :: L.Lambda_Expr
 --         -> ( Either String [I.SECDInstruction]
 --            , SymbolTable.SymbolTableT String String
 --            )
-compile ast = (runIdentity . ((flip runStateT) ST.mkInitState) . runExceptT) (deBruijn ast)
+compile ast = fst $ (runIdentity . ((flip runStateT) ST.mkInitState) . runExceptT) (deBruijn ast)
 
 -- parseAndExecuteLambda :: String -> Either (String ()) StateType
 -- You can't use two functions returning eithers parameterized on a different
 -- "Left" type since the function would have multiple return types.
 parseAndExecuteLambda source = do
-    parseResult <- case L.parseLambda source of
+    parseResult <- case L.parse_lambda source of
                         (Left err)   -> Left $ "Failed to parse Lambda.: " ++ (show err)
                         (Right code) -> (Right code)
     compilationResult <- case compile parseResult of
-                            (Left err, _)         -> Left $ "Failed to compile code: " ++ (show err)
-                            (Right compResult, _) -> Right compResult
+                            (Left err)         -> Left $ "Failed to compile code: " ++ (show err)
+                            (Right compResult) -> Right compResult
     return $ execCode compilationResult
 
 show_debug_information :: String -> IO ()
 show_debug_information src = do 
-  let Right parsed = L.parseLambda src
-      (either_inst, sym_table) = compile parsed
+  let Right parsed = L.parse_lambda src
+      (either_inst) = compile parsed
   putStrLn $ "Parsed Source Code: "
   putStrLn $ ppShow parsed
   putStrLn $ "Compiled Source Code: "
@@ -397,14 +431,14 @@ show_debug_information src = do
       putStrLn $ "Execution Result: "
       putStrLn $ ppShow $ exec_code_dbg instrs
 
-execute_lambda_and_show_state :: String -> Bool -> Either String (L.Term, [I.SECDInstruction], StateType, String) 
+execute_lambda_and_show_state :: String -> Bool -> Either String (L.Lambda_Expr, [I.SECDInstruction], StateType, String) 
 execute_lambda_and_show_state src enable_dbg = do
-  case L.parseLambda src of
+  case L.parse_lambda src of
     (Left err_msg) -> Left $ show err_msg
     (Right ast) -> do
       case compile ast of
-        ((Left err_msg), _) -> Left $ show err_msg
-        ((Right instrs), _) -> do
+        ((Left err_msg)) -> Left $ show err_msg
+        ((Right instrs)) -> do
           case exec_code_dbg instrs of
             ((Left error), exec_state) -> do
               if enable_dbg
@@ -422,11 +456,10 @@ read_lambdas_from_file filePath = do
     return lambdas
 
 enable_dbg :: Bool
-enable_dbg = True
+enable_dbg = False
 
-read_and_execute_tests :: FilePath -> IO ()
-read_and_execute_tests path_to_lambdas = do 
-  lambdas <- read_lambdas_from_file path_to_lambdas
+execute_tests :: [String] -> IO ()
+execute_tests lambdas = do 
   forM_ lambdas (\lambda -> do
     case execute_lambda_and_show_state lambda enable_dbg of
       (Left err_msg) -> putStrLn $ err_msg
@@ -442,13 +475,29 @@ read_and_execute_tests path_to_lambdas = do
         putStrLn $ (ppShow exec_state) ++ "\n"
         putStrLn $ "********************************************************************************")
 
+parse_and_compile :: [String] -> IO ()
+parse_and_compile lambdas = do
+  forM_ lambdas (\lambda_i -> do
+    case L.parse_lambda lambda_i of
+      Left err -> error err
+      Right ast -> do
+        case compile ast of
+          Left err -> error err
+          Right compiled_code ->
+            putStrLn $ ppShow compiled_code)
+
 main :: IO ()
 main = do
-  read_and_execute_tests "rec_test.lambda"
-  -- ls <- read_lambdas_from_file "rec_test.lambda"
-  -- let lam = head ls
-  --     parsed = L.parseLambda lam
-  -- putStrLn $ ppShow parsed
+  let tests = [ "(\\x. (x + 2) = 20) if (\\x. false) 1 then 5 else 18"
+              , "(\\add. \\x. \\y. add x y)  (\\a. \\b. a + b) 10 20"
+              , "(\\add. \\x. \\y. \\z. 10*add x y z) (\\a. \\b. \\c. a + b + c) 3 2 1"
+              , "(fix (\\fact. \\n. if n = 1 then 1 else n * (fact (n - 1)))) 5"
+              , "(fix (\\fib. \\n. if n < 2 then 1 else (fib (n - 1)) + (fib (n - 2)))) 8"
+              ]
+  execute_tests tests
+  -- let src = ["(fix (\\fact. \\n. if n = 1 then 1 else n * (fact (n - 1)))) 10"]
+  -- parse_and_compile src
+  -- execute_tests src
 
 
 

@@ -1,4 +1,7 @@
-module LambdaParser where
+module LambdaParser 
+  ( parse_lambda
+  , Lambda_Expr (..)
+  ) where
 
 import Text.Parsec.Char
 import Text.Parsec.Combinator
@@ -6,23 +9,29 @@ import Text.Parsec.Number
 import Text.Parsec
 import Text.Show.Pretty
 import Control.Monad
+import Data.Functor.Identity (Identity)
 
--- There are no statements so to speak.
--- Three things that an expression can be
---  (1) A variable (x,y,z etc...)
---  (2) Abstraction (Func defn)
---  (3) Application (Func application)
---  (4) An integer literal
---  (5) A binary operation (+, -, /, *)
-data Expr
+
+-- ****************************************************************************
+--                               Data Structures
+-- ****************************************************************************
+data Lambda_Expr
   = Var String
-  | Abstraction String Expr
-  | Application Expr Expr
-  | Add Expr Expr
-  | Sub Expr Expr
-  | Mul Expr Expr
-  | Div Expr Expr
+  | Abstraction String Lambda_Expr
+  | Application Lambda_Expr Lambda_Expr
+  | Add Lambda_Expr Lambda_Expr
+  | Sub Lambda_Expr Lambda_Expr
+  | Mul Lambda_Expr Lambda_Expr
+  | Div Lambda_Expr Lambda_Expr
+  | LessThan Lambda_Expr Lambda_Expr
+  | Equal Lambda_Expr Lambda_Expr
+  | Conditional Lambda_Expr Lambda_Expr Lambda_Expr
   | IntLiteral Int
+  | BoolLiteral Bool
+  -- Native fixed point combinator. 
+  -- One day I'll understand what that means.
+  -- maybe...
+  | Fix Lambda_Expr 
   deriving (Show, Eq)
 
 data BinaryOperator
@@ -30,127 +39,156 @@ data BinaryOperator
   | BinaryPlus
   | BinaryStar
   | BinarySlash
+  | BinaryLeftAngle
+  | BinaryEquality
   deriving (Show, Eq)
 
-parse_lambda :: String -> Either String Expr
-parse_lambda src = 
-  case parse top_level_lambda_parser "Failed to parse lambda." src of
-    Left parser_error -> Left $ show parser_error
-    Right ast -> Right ast
+type Parser a = ParsecT String () Identity a
 
+-- ****************************************************************************
+--                                Reserved Keywords
+-- ****************************************************************************
+reserved_keywords :: [String]
+reserved_keywords = [ "if"
+                    , "then"
+                    , "else"
+                    , "true"
+                    , "false"
+                    ]
+
+-- ****************************************************************************
+--                                Top Level Parser
+-- ****************************************************************************
+top_level_lambda_parser :: Parser Lambda_Expr
 top_level_lambda_parser = do
-  -- These need to be ordered from more general to less general
-  expr <- choice $ fmap try [ app_parser_top_level
-                            , bracketed_expr_parser_top_level
-                            , binary_expression_parser_top_level
-                            , abs_parser_top_level
-                            , var_parser_top_level
-                            , lit_parser_top_level
-                            ]
+  expr <- lambda_parser
   eof
   return expr
 
-lambda_parser = do
-  expr <- choice $ fmap try [ app_parser
+-- ****************************************************************************
+--                                Expression Parser
+-- ****************************************************************************
+lambda_parser :: Parser Lambda_Expr
+lambda_parser = do  
+  expr <- choice $ fmap try [ fix_parser
+                            , conditional_parser
+                            , app_parser
                             , binary_expression_parser
-                            , bracketed_expr_parser
+                            , bracketed_expression_parser
                             , abs_parser
+                            , literal_parser
                             , var_parser
-                            , lit_parser
                             ]
   return expr
 
-bracketed_expr_parser_top_level = do
-  expr <- bracketed_expr_parser
-  eof
-  return expr
+-- ****************************************************************************
+--                              Sub Expression Parsers
+-- ****************************************************************************
+fix_parser :: Parser Lambda_Expr
+fix_parser = do
+  fix_token_parser
+  spaces
+  the_fixed_expr <- lambda_parser
+  return $ Fix the_fixed_expr
 
-lit_parser_top_level = do
-  the_literal <- lit_parser
-  eof
-  return the_literal
+conditional_parser :: Parser Lambda_Expr
+conditional_parser = do
+  if_token_parser
+  spaces
+  predicate <- lambda_parser
+  spaces
+  then_token_parser
+  spaces
+  then_clause <- lambda_parser
+  spaces
+  else_token_parser
+  spaces
+  else_clause <- lambda_parser
+  spaces
+  return $ Conditional predicate then_clause else_clause
 
-lit_parser = do
-  identifier <- int_lit_parser
-  return identifier
+app_parser :: Parser Lambda_Expr
+app_parser = do 
+  lh_term <- app_term_parser
+  spaces
+  rh_term <- app_term_parser
+  let the_app_term = Application lh_term rh_term
+  continuation_parser the_app_term
+  where
+    app_term_parser = choice $ fmap try [ fix_parser
+                                        , conditional_parser
+                                        , bracketed_expression_parser
+                                        , abs_parser
+                                        , literal_parser
+                                        , var_parser
+                                        ]
+    continuation_parser current_term = do 
+      spaces
+      next_app_term <- optionMaybe app_term_parser
+      case next_app_term of
+        Nothing -> return current_term
+        Just the_next_term -> continuation_parser (Application current_term the_next_term)
 
-binary_expression_parser_top_level = do
-  binary_operation <- binary_expression_parser
-  eof
-  return binary_operation
-
+binary_expression_parser :: Parser Lambda_Expr
 binary_expression_parser = do
   spaces
-  lh_expr <- lhs_parser
+  lh_expr <- binary_expression_term_parser
   spaces
   op_constructor <- binary_operator_parser
   spaces
-  rh_expr <- rhs_parser
+  rh_expr <- binary_expression_term_parser
   spaces
-  let this_expression = lh_expr `op_constructor` rh_expr
+  let this_expression = op_constructor lh_expr rh_expr
   continuation_parser this_expression
   where
-    lhs_parser = do
-      expr <- choice $ fmap try [ bracketed_expr_parser
+    binary_expression_term_parser = do  
+      expr <- choice $ fmap try [ fix_parser
+                                , conditional_parser
+                                , bracketed_expression_parser
                                 , abs_parser
                                 , app_parser
+                                , literal_parser
                                 , var_parser
-                                , lit_parser
                                 ]
       return expr
-    rhs_parser = lhs_parser
     continuation_parser the_expr = do
       spaces
       operator <- optionMaybe binary_operator_parser
-      case operator of 
+      spaces
+      case operator of
         Nothing -> return the_expr
         (Just op_constructor) -> do
-          rhs_expr <- rhs_parser
+          rhs_expr <- binary_expression_term_parser
           continuation_parser (op_constructor the_expr rhs_expr)
-
-binary_operator_parser = do
-  operator <- choice $ fmap try [ binary_minus_parser
-                                , binary_plus_parser
-                                , binary_star_parser
-                                , binary_slash_parser
-                                ]
-  let op_constructor = case operator of
-                        BinaryPlus -> Add
-                        BinaryMinus -> Sub
-                        BinaryStar -> Mul
-                        BinarySlash -> Div
-  return op_constructor
-
-bracketed_expr_parser = do
+    binary_operator_parser = do
+      operator_token <- operator_token_parser 
+      let binary_constructor = case operator_token of
+                                  BinaryPlus -> Add
+                                  BinaryMinus -> Sub
+                                  BinaryStar -> Mul
+                                  BinarySlash -> Div
+                                  BinaryLeftAngle -> LessThan
+                                  BinaryEquality -> Equal
+      return binary_constructor
+    operator_token_parser = do
+      operator_token <- choice $ fmap try [ binary_minus_parser
+                                          , binary_plus_parser
+                                          , binary_star_parser
+                                          , binary_slash_parser
+                                          , binary_left_angle_parser
+                                          , binary_equality_parser
+                                          ]
+      return operator_token
+  
+bracketed_expression_parser :: Parser Lambda_Expr
+bracketed_expression_parser = do
   opening_paren
   the_expr <- lambda_parser
   closing_paren
   return the_expr
 
-abs_parser_top_level = do
-  abstraction <- abs_parser 
-  eof
-  return abstraction
-
-app_parser_top_level = do
-  application <- app_parser
-  eof
-  return application
-
-var_parser_top_level = do
-  variable <- var_parser
-  eof
-  return variable
-
-ident_parser = do 
-  ident <- many1 letter
-  return ident
-
-var_parser = do
-  ident <- ident_parser
-  return $ Var ident
-
-abs_parser = do
+abs_parser :: Parser Lambda_Expr
+abs_parser = do 
   char '\\'
   ident <- ident_parser
   char '.'
@@ -158,38 +196,84 @@ abs_parser = do
   abs_expr <- lambda_parser
   return $ Abstraction ident abs_expr
 
-app_parser = do 
-  lh_term <- app_term_parser
-  spaces 
-  rh_term <- app_term_parser
-  let the_app_term = Application lh_term rh_term
-  rest <- continuation_parser the_app_term
-  return rest
-  where
-    app_term_parser = choice $ fmap try [ bracketed_expr_parser
-                                        , abs_parser
-                                        , var_parser
-                                        , lit_parser
-                                        ]
-    continuation_parser current_term = do  
-      spaces
-      next_app_term <- optionMaybe app_term_parser
-      case next_app_term of
-        Nothing -> return current_term
-        Just the_next_term -> continuation_parser (Application current_term the_next_term)
+var_parser :: Parser Lambda_Expr
+var_parser = ident_parser >>= \v -> return $ Var v
 
-int_lit_parser = do
-  spaces
-  the_number <- int
-  return $ IntLiteral the_number
+literal_parser :: Parser Lambda_Expr
+literal_parser = do
+  the_literal <- choice $ fmap try [ int_literal_parser
+                                   , bool_literal_parser
+                                   ]
+  return the_literal
 
+-- ****************************************************************************
+--                          Helpers and Leaves                        
+-- ****************************************************************************
+ident_parser :: Parser String
+ident_parser = do
+  the_ident <- many1 letter
+  if not $ the_ident `elem` reserved_keywords
+    then return the_ident
+    else parserZero
+
+int_literal_parser :: Parser Lambda_Expr
+int_literal_parser = int >>= \v -> return $ IntLiteral v
+
+bool_literal_parser :: Parser Lambda_Expr
+bool_literal_parser = do
+  bool_literal <- choice $ fmap string ["true", "false"]
+  case bool_literal of
+    "true" -> return $ BoolLiteral True
+    "false" -> return $ BoolLiteral False
+
+binary_minus_parser :: Parser BinaryOperator
 binary_minus_parser = char '-' >> return BinaryMinus
-binary_plus_parser = char '+' >> return BinaryPlus
-binary_star_parser = char '*' >> return BinaryStar
-binary_slash_parser = char '/' >> return BinarySlash
-opening_paren = char '('
-closing_paren = char ')'
 
+binary_plus_parser :: Parser BinaryOperator
+binary_plus_parser = char '+' >> return BinaryPlus
+
+binary_star_parser:: Parser BinaryOperator
+binary_star_parser = char '*' >> return BinaryStar
+
+binary_slash_parser :: Parser BinaryOperator
+binary_slash_parser = char '/' >> return BinarySlash
+
+binary_left_angle_parser :: Parser BinaryOperator
+binary_left_angle_parser = char '<' >> return BinaryLeftAngle
+
+binary_equality_parser :: Parser BinaryOperator
+binary_equality_parser = char '=' >> return BinaryEquality
+
+opening_paren :: Parser ()
+opening_paren = char '(' >> return ()
+
+closing_paren :: Parser ()
+closing_paren = char ')' >> return ()
+
+if_token_parser :: Parser ()
+if_token_parser = string "if" >> return ()
+
+then_token_parser :: Parser ()
+then_token_parser = string "then" >> return ()
+
+else_token_parser :: Parser ()
+else_token_parser = string "else" >> return ()
+
+fix_token_parser :: Parser ()
+fix_token_parser = string "fix" >> return ()
+
+-- ****************************************************************************
+--                          Exported Functions
+-- ****************************************************************************
+parse_lambda :: String -> Either String Lambda_Expr
+parse_lambda src =
+  case parse top_level_lambda_parser "Failed to parse lambda." src of
+    Left err -> Left $ show err
+    Right lambda_ast -> Right lambda_ast
+
+-- ****************************************************************************
+--                          Adhoc Testing
+-- ****************************************************************************
 print_one_parsed_lambda :: String -> IO ()
 print_one_parsed_lambda src = do
   case parse_lambda src of
@@ -212,6 +296,7 @@ main = do
             , "(\\f. \\x. f + x) 11" 
             , "(\\f. \\x. f + x) 1 2" 
             , "(\\x. f + x) 1 2" 
+            , "if (\\x. true) 5 then 1 + 1 * 2 else (2 + 3)"
             ]
   forM_ src (\src_i -> do
     putStrLn "Original Source: "

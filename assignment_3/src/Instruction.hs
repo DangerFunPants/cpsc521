@@ -10,13 +10,14 @@ data SECDInstruction
  -- Arithmetic Instructions
  | Const Int
  | Add
+ | Sub
  | Mul
  | LEq
  | Eq
  -- Boolean Instructions
  | True
  | False
- | IfThenElse
+ | IfThenElse [SECDInstruction] [SECDInstruction]
  -- List Instructions
  | Cons
  | Nil
