@@ -26,6 +26,8 @@ get_lambda_from_args args =
     then Nothing
     else Just $ tail (foldl (\acc v -> acc ++ " " ++ v) "" args)
 
+get_filepath_from_args :: [String] -> Maybe String
+get_filepath_from_args = get_lambda_from_args
 
 -- ****************************************************************************
 --                            State Helpers
@@ -33,35 +35,39 @@ get_lambda_from_args args =
 add_global_binding :: L.Binding -> Lambda_Repl ()
 add_global_binding binding = modify $ (binding :)
 
+add_global_bindings :: [L.Binding] -> Lambda_Repl ()
+add_global_bindings binding_list = modify $ (binding_list ++)
+
 get_global_bindings :: Lambda_Repl [Binding]
 get_global_bindings = get
 
--- ****************************************************************************
---             Command Definition and Autocompletion (Top Level)
--- ****************************************************************************
-type Lambda_Repl a = ReplState [Binding] a
-
-top_level_cmd :: String -> Lambda_Repl ()
-top_level_cmd input =
-  case get_lambda_from_args [input] of 
+parse_and_inject_binding :: String -> Lambda_Repl ()
+parse_and_inject_binding src = 
+  case get_lambda_from_args [src] of 
     Nothing -> return ()
     Just the_lambda ->
-      case parse_expression_binding input of
+      case parse_expression_binding the_lambda of
         Left err -> liftIO $ putStrLn err
         Right binding -> do
           add_global_binding binding
           the_new_state <- get
           liftIO $ putStrLn $ ppShow the_new_state
+
+-- ****************************************************************************
+--             Command Definition and Autocompletion (Top Level)
+-- ****************************************************************************
+type Lambda_Repl a = ReplState [Binding] a
   
 lambda_repl_init :: Lambda_Repl ()
 lambda_repl_init = return ()
 
 top_level_matcher :: MonadIO m => [(String, CompletionFunc m)]
-top_level_matcher = [ (":parse"  , listCompleter [])
-                    , (":q"      , listCompleter [])
-                    , (":exec"   , listCompleter [])
-                    , (":compile", listCompleter [])
-                    , (":debug:" , listCompleter [])
+top_level_matcher = [ (":parse"   , listCompleter [])
+                    , (":q"       , listCompleter [])
+                    , (":exec"    , listCompleter [])
+                    , (":compile" , listCompleter [])
+                    , (":debug"   , listCompleter [])
+                    , (":load"    , fileCompleter)
                     ]
 
 top_level_prefix_completer :: Monad m => WordCompleter m
@@ -71,6 +77,7 @@ top_level_prefix_completer n = do
               , ":exec"
               , ":compile"
               , ":debug"
+              , ":load"
               ]
   return $ filter (isPrefixOf n) names
 
@@ -81,11 +88,15 @@ top_level_opts = [ ("parse"   , parse)
                  , ("exec"    , exec)
                  , ("compile" , compile)
                  , ("debug"   , debug)
+                 , ("load"    , load)
                  ]
 
 -- ****************************************************************************
 --                          Command Implementation (Top Level)
 -- ****************************************************************************
+top_level_cmd :: String -> Lambda_Repl ()
+top_level_cmd = parse_and_inject_binding
+
 parse :: [String] -> Lambda_Repl ()
 parse args = do
   case get_lambda_from_args args of
@@ -148,6 +159,16 @@ compile args =
 
 debug :: [String] -> Lambda_Repl ()
 debug args = get_global_bindings >>= \v -> liftIO $ debug_repl args v
+
+load :: [String] -> Lambda_Repl ()
+load args = do
+  case get_filepath_from_args args of
+    Nothing -> liftIO $ putStrLn "Must provide a file path."
+    Just file_path -> do
+      file_contents <- liftIO $ readFile file_path
+      let lambda_defns = lines file_contents
+          binding_list = L.parse_lambda_file lambda_defns
+      add_global_bindings binding_list
 
 -- ****************************************************************************
 --             Command Definition and Autocompletion (Debug Mode)

@@ -2,6 +2,7 @@ module LambdaParser
   ( parse_lambda
   , parse_expression_binding
   , introduce_global_bindings
+  , parse_lambda_file
   , Lambda_Expr (..)
   , Binding (..)
   ) where
@@ -79,6 +80,37 @@ reserved_keywords = [ "if"
                     , "nil"
                     , "case"
                     ]
+
+-- ****************************************************************************
+--                        Lambda Definition File Parser
+-- ****************************************************************************
+lambda_file_parser :: Parser (Maybe Binding)
+lambda_file_parser = do
+  comment_line <- optionMaybe comment_parser
+  case comment_line of
+    Nothing -> do
+      the_binding <- bind_expression_parser
+      return $ Just the_binding
+    Just () -> return Nothing
+
+comment_parser :: Parser ()
+comment_parser = do
+  comment_token_parser
+  manyTill anyChar (try endOfLine)
+  return ()
+
+comment_token_parser :: Parser ()
+comment_token_parser = char '#' >> return ()
+
+parse_lambda_file :: [String] -> [Binding]
+parse_lambda_file [] = []
+parse_lambda_file (x:xs) = do
+  case parse lambda_file_parser "" x of
+    Left parse_error -> parse_lambda_file xs
+    Right parse_result -> 
+      case parse_result of  
+        Nothing -> parse_lambda_file xs
+        Just binding -> binding : (parse_lambda_file xs)
 
 -- ****************************************************************************
 --                            Repl Name Binding Parser
