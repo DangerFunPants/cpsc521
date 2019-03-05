@@ -8,6 +8,8 @@ import Text.Parsec.Char
 import Text.Parsec.Combinator
 import Text.Parsec.Number
 import Text.Parsec
+import Text.ParserCombinators.Parsec.Error
+
 import Text.Show.Pretty
 import Control.Monad
 import Data.Functor.Identity (Identity)
@@ -315,7 +317,7 @@ bool_literal_parser = do
 
 binary_minus_parser :: Parser BinaryOperator
 binary_minus_parser = char '-' >> return BinaryMinus
-
+ 
 binary_plus_parser :: Parser BinaryOperator
 binary_plus_parser = char '+' >> return BinaryPlus
 
@@ -372,8 +374,11 @@ case_token_parser = string "case" >> return ()
 -- ****************************************************************************
 parse_lambda :: String -> Either String Lambda_Expr
 parse_lambda src =
-  case parse top_level_lambda_parser "Failed to parse lambda." src of
-    Left err -> Left $ show err
+  case parse top_level_lambda_parser "" src of
+    Left err -> Left $ 
+      let error_loc = show $ errorPos err
+          error_msg = messageString $ head $ errorMessages err
+      in "Parse error at " ++ show err
     Right lambda_ast -> Right lambda_ast
 
 -- ****************************************************************************

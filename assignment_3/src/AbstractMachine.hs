@@ -6,6 +6,8 @@ module AbstractMachine
   , parse_and_compile
   , StateType (..)
   , mk_state_for_dbg_execution
+  , exec_code_dbg
+  , exec_to_completion
   ) where
 
 import Control.Lens
@@ -200,13 +202,23 @@ exec_code_dbg :: StateType -> Either (String, StateType) StateType
 exec_code_dbg input_state = 
   case the_either of
     Left err -> Left (err, the_state)
-    Right () -> Right the_state
+    Right () -> Right (set dbg_history [] the_state)
   where
     state_fun = (flip runStateT) input_state
     (the_either, the_state) = (runIdentity . state_fun . runExceptT) execute_dbg
 
+exec_to_completion :: StateType -> Either (String, StateType) StateType
+exec_to_completion input_state =
+  case the_either of
+    Left err -> Left (err, clear_dbg_history the_state)
+    Right () -> Right (clear_dbg_history the_state)
+  where
+    state_fun = (flip runStateT) input_state
+    (the_either, the_state) = (runIdentity . state_fun . runExceptT) execute
+    clear_dbg_history = set dbg_history []
+
 mk_state_for_dbg_execution :: [I.SECDInstruction] -> StateType
-mk_state_for_dbg_execution instrs = StateType instrs [] [] [StateType instrs [] [] []]
+mk_state_for_dbg_execution instrs = StateType instrs [] [] []
 
 -- ****************************************************************************
 --                            DeBruijn Compilation
