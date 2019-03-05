@@ -1,5 +1,7 @@
 module LambdaParser 
   ( parse_lambda
+  , parse_expression_binding
+  , introduce_global_bindings
   , Lambda_Expr (..)
   , Binding (..)
   ) where
@@ -77,6 +79,34 @@ reserved_keywords = [ "if"
                     , "nil"
                     , "case"
                     ]
+
+-- ****************************************************************************
+--                            Repl Name Binding Parser
+-- ****************************************************************************
+bind_expression_parser :: Parser Binding
+bind_expression_parser = do
+  let_token_parser
+  spaces
+  lhs <- ident_parser
+  spaces
+  binary_equality_parser
+  spaces
+  rhs <- lambda_parser
+  eof
+  return $ Binding lhs rhs
+
+parse_expression_binding :: String -> Either String Binding
+parse_expression_binding src = 
+  case parse bind_expression_parser "" src of
+    Left err -> 
+      let error_loc = show $ errorPos err
+          error_msg = messageString $ head $ errorMessages err
+      in Left $ "Parse error at " ++ show err
+    Right the_expr -> Right the_expr
+
+introduce_global_bindings :: [Binding] -> Lambda_Expr -> Lambda_Expr
+introduce_global_bindings global_bindings top_level_expr = 
+  Let global_bindings top_level_expr
 
 -- ****************************************************************************
 --                                Top Level Parser

@@ -509,13 +509,15 @@ show_debug_information src = do
 
 execute_lambda_and_show_state 
   :: String 
+  -> [L.Binding]
   -> Bool 
   -> Either String (L.Lambda_Expr, [I.SECDInstruction], StateType, String) 
-execute_lambda_and_show_state src enable_dbg = do
+execute_lambda_and_show_state src global_bindings enable_dbg = do
   case L.parse_lambda src of
     (Left err_msg) -> Left $ show err_msg
     (Right ast) -> do
-      case compile ast of
+      let with_globals = L.introduce_global_bindings global_bindings ast
+      case compile with_globals of
         ((Left err_msg)) -> Left $ show err_msg
         ((Right instrs)) -> do
           case exec_code instrs of
@@ -540,7 +542,7 @@ enable_dbg = False
 execute_tests :: [String] -> IO ()
 execute_tests lambdas = do 
   forM_ lambdas (\lambda -> do
-    case execute_lambda_and_show_state lambda enable_dbg of
+    case execute_lambda_and_show_state lambda [] enable_dbg of
       (Left err_msg) -> putStrLn $ err_msg
       (Right (ast, instrs, exec_state, info)) -> do
         putStrLn $ "********************************************************************************"
@@ -554,8 +556,14 @@ execute_tests lambdas = do
         putStrLn $ (ppShow exec_state) ++ "\n"
         putStrLn $ "********************************************************************************")
 
-parse_and_compile :: String -> Either String [I.SECDInstruction]
-parse_and_compile lambda = L.parse_lambda lambda >>= compile
+parse_and_compile 
+  :: String 
+  -> [L.Binding] 
+  -> Either String [I.SECDInstruction]
+parse_and_compile lambda global_bindings = do 
+  lambda_ast <- L.parse_lambda lambda
+  let lambda_with_globals = L.introduce_global_bindings global_bindings lambda_ast
+  compile lambda_with_globals
 
 main :: IO ()
 main = do

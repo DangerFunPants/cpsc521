@@ -14,6 +14,8 @@ module SymbolTable
     , empty
     , mkInitState
     , lookupDistance
+    , MapList (..)
+    , SymbolTable (..)
     ) where
 
 import qualified Data.Map as M
@@ -55,6 +57,7 @@ instance SymbolTable (MapList) where
     distance k (MapList []) = Nothing
 
 newtype MapList k v = MapList [M.Map k v]
+  deriving (Show, Eq)
 
 type ST k v = MapList k v
 
