@@ -1,6 +1,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE TypeSynonymInstances #-}
+{-# LANGUAGE TemplateHaskell #-}
 
 module LambdaRepl where
 
@@ -8,6 +9,8 @@ import System.Console.Repline
 
 import Data.List (isPrefixOf)
 import Control.Monad.State.Strict
+import Control.Lens
+
 import Text.Show.Pretty
 
 import qualified LambdaParser as L
@@ -18,6 +21,18 @@ import qualified Typer as T
 
 type Repl a = HaskelineT IO a
 type ReplState s a = HaskelineT (StateT s IO) a
+
+
+-- ****************************************************************************
+--                         Global State of the REPL
+-- ****************************************************************************
+-- @Cleanup: Thus has to be at the top of the file in order for the makeLenses
+-- splice to be visible. Should move to another file or something.
+data Repl_State = Repl_State
+  { _global_bindings :: [L.Binding]
+  } 
+  deriving (Show, Eq)
+makeLenses ''Repl_State
 
 -- ****************************************************************************
 --                                  Helpers
@@ -35,19 +50,30 @@ get_filepath_from_args = get_lambda_from_args
 --                            State Helpers
 -- ****************************************************************************
 add_global_binding :: L.Binding -> Lambda_Repl ()
-add_global_binding binding = modify $ (binding :)
+add_global_binding binding = modify $ (over global_bindings (binding :))
 
 add_global_bindings :: [L.Binding] -> Lambda_Repl ()
-add_global_bindings binding_list = modify $ (binding_list ++)
+add_global_bindings binding_list = modify $ (over global_bindings (binding_list ++))
 
 get_global_bindings :: Lambda_Repl [L.Binding]
-get_global_bindings = get
+get_global_bindings = get >>= \st -> return (st^.global_bindings)
+
+get_global_symbol_names :: Lambda_Repl [String]
+get_global_symbol_names = 
+  get >>= \st -> return $ bindings_to_names (st^.global_bindings)
+
+bindings_to_names :: [L.Binding] -> [String]
+bindings_to_names = fmap binding_to_name
+binding_to_name :: L.Binding -> String
+binding_to_name (L.Binding name expr) = name
+binding_to_name (L.RecBinding name expr) = name
 
 clear_all_global_bindings :: Lambda_Repl ()
-clear_all_global_bindings = modify (\_ -> [])
+clear_all_global_bindings = modify $ (set global_bindings [])
 
 clear_global_binding :: String -> Lambda_Repl ()
-clear_global_binding bound_expr_name = modify (delete_binding bound_expr_name)
+clear_global_binding bound_expr_name = 
+  modify $ (over global_bindings (delete_binding bound_expr_name))
   where
     delete_binding target_name (binding@(L.Binding name _):xs) = 
       if target_name == name
@@ -75,24 +101,41 @@ type_expression_with_global_bindings lambda = do
 -- ****************************************************************************
 --             Command Definition and Autocompletion (Top Level)
 -- ****************************************************************************
-type Lambda_Repl a = ReplState [L.Binding] a
+type Lambda_Repl a = ReplState Repl_State a
   
+mk_init_state_for_lambda :: Repl_State
+mk_init_state_for_lambda = Repl_State []
+
 lambda_repl_init :: Lambda_Repl ()
 lambda_repl_init = return ()
 
-top_level_matcher :: MonadIO m => [(String, CompletionFunc m)]
-top_level_matcher = [ (":parse"   , listCompleter [])
-                    , (":q"       , listCompleter [])
-                    , (":exec"    , listCompleter [])
-                    , (":compile" , listCompleter [])
-                    , (":debug"   , listCompleter [])
-                    , (":load"    , fileCompleter)
-                    , (":print"   , listCompleter [])
-                    , (":free"    , listCompleter [])
-                    , (":type"    , listCompleter [])
-                    ]
+-- global_symbol_completer :: (MonadIO m, MonadState Repl_State m) => String -> CompletionFunc m
+-- global_symbol_completer s (s1, s2) = do
+--   global_symbol_names <- get_global_symbol_names
+--   listCompleter global_symbol_names
 
-top_level_prefix_completer :: Monad m => WordCompleter m
+-- global_symbol_completer :: CompletionFunc m
+global_symbol_completer (s1, s2) = do
+  -- let bindings = st^.global_bindings
+  st <- get
+  let ns = bindings_to_names (st^.global_bindings)
+  listCompleter ns (s1, s2)
+
+-- top_level_matcher :: (MonadIO m, MonadState Repl_State m) => [(String, CompletionFunc m)]
+top_level_matcher = completer_list
+  where
+    completer_list = [ (":parse"   , listCompleter [])
+                     , (":q"       , listCompleter [])
+                     , (":exec"    , global_symbol_completer)
+                     , (":compile" , listCompleter [])
+                     , (":debug"   , global_symbol_completer)
+                     , (":load"    , fileCompleter)
+                     , (":print"   , listCompleter [])
+                     , (":free"    , global_symbol_completer)
+                     , (":type"    , global_symbol_completer)
+                     ]
+
+top_level_prefix_completer :: (Monad m, MonadState Repl_State m) => WordCompleter m
 top_level_prefix_completer n = do
   let names = [ ":parse"
               , ":q"
@@ -330,7 +373,7 @@ debug_repl init_state global_bindings = do
     exec_func st = flip evalStateT st eval_func
 
 lambda_repl :: IO ()
-lambda_repl = exec_func []
+lambda_repl = exec_func mk_init_state_for_lambda
   where
     prompt = pure " \x03BB> "
     command_prefix = Just ':'
