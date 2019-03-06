@@ -10,9 +10,10 @@ import Data.List (isPrefixOf)
 import Control.Monad.State.Strict
 import Text.Show.Pretty
 
-import LambdaParser as L
-import AbstractMachine as A
-import SymbolTable as S
+import qualified LambdaParser as L
+import qualified AbstractMachine as A
+import qualified SymbolTable as S
+import qualified LambdaPrinter as PP
 
 type Repl a = HaskelineT IO a
 type ReplState s a = HaskelineT (StateT s IO) a
@@ -38,15 +39,26 @@ add_global_binding binding = modify $ (binding :)
 add_global_bindings :: [L.Binding] -> Lambda_Repl ()
 add_global_bindings binding_list = modify $ (binding_list ++)
 
-get_global_bindings :: Lambda_Repl [Binding]
+get_global_bindings :: Lambda_Repl [L.Binding]
 get_global_bindings = get
+
+clear_all_global_bindings :: Lambda_Repl ()
+clear_all_global_bindings = modify (\_ -> [])
+
+clear_global_binding :: String -> Lambda_Repl ()
+clear_global_binding bound_expr_name = modify (delete_binding bound_expr_name)
+  where
+    delete_binding target_name (binding@(L.Binding name _):xs) = 
+      if target_name == name
+        then xs
+        else binding : (delete_binding target_name xs)
 
 parse_and_inject_binding :: String -> Lambda_Repl ()
 parse_and_inject_binding src = 
   case get_lambda_from_args [src] of 
     Nothing -> return ()
     Just the_lambda ->
-      case parse_expression_binding the_lambda of
+      case L.parse_expression_binding the_lambda of
         Left err -> liftIO $ putStrLn err
         Right binding -> do
           add_global_binding binding
@@ -56,7 +68,7 @@ parse_and_inject_binding src =
 -- ****************************************************************************
 --             Command Definition and Autocompletion (Top Level)
 -- ****************************************************************************
-type Lambda_Repl a = ReplState [Binding] a
+type Lambda_Repl a = ReplState [L.Binding] a
   
 lambda_repl_init :: Lambda_Repl ()
 lambda_repl_init = return ()
@@ -68,6 +80,8 @@ top_level_matcher = [ (":parse"   , listCompleter [])
                     , (":compile" , listCompleter [])
                     , (":debug"   , listCompleter [])
                     , (":load"    , fileCompleter)
+                    , (":print"   , listCompleter [])
+                    , (":free"    , listCompleter [])
                     ]
 
 top_level_prefix_completer :: Monad m => WordCompleter m
@@ -78,6 +92,8 @@ top_level_prefix_completer n = do
               , ":compile"
               , ":debug"
               , ":load"
+              , ":print"
+              , ":free"
               ]
   return $ filter (isPrefixOf n) names
 
@@ -89,6 +105,8 @@ top_level_opts = [ ("parse"   , parse)
                  , ("compile" , compile)
                  , ("debug"   , debug)
                  , ("load"    , load)
+                 , ("print"   , print_bindings)
+                 , ("free"    , free)
                  ]
 
 -- ****************************************************************************
@@ -170,10 +188,24 @@ load args = do
           binding_list = L.parse_lambda_file lambda_defns
       add_global_bindings binding_list
 
+print_bindings :: [String] -> Lambda_Repl ()
+print_bindings _ = do
+  bindings <- get_global_bindings
+  let pretty_bindings = fmap PP.print_binding bindings
+  liftIO $ mapM_ putStrLn pretty_bindings
+
+free :: [String] -> Lambda_Repl ()
+free args = 
+  if null args 
+    then clear_all_global_bindings >> (liftIO $ putStrLn "Cleared all global bindings.")
+    else 
+      forM_ args (\name_to_free -> do
+        clear_global_binding name_to_free)
+
 -- ****************************************************************************
 --             Command Definition and Autocompletion (Debug Mode)
 -- ****************************************************************************
-type Debug_Repl a = ReplState StateType a
+type Debug_Repl a = ReplState A.StateType a
 
 debug_repl_init :: Debug_Repl ()
 debug_repl_init = return ()
@@ -226,7 +258,7 @@ list args = do
 continue :: [String] -> Debug_Repl ()
 continue args = do
   current_state <- get
-  case exec_to_completion current_state of  
+  case A.exec_to_completion current_state of  
     Left (err_msg, err_state) -> liftIO $ do 
       putStrLn err_msg
       putStrLn $ ppShow err_state

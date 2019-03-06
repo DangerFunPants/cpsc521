@@ -17,7 +17,6 @@ import Text.Show.Pretty
 import Control.Monad
 import Data.Functor.Identity (Identity)
 
-
 -- ****************************************************************************
 --                               Data Structures
 -- ****************************************************************************
