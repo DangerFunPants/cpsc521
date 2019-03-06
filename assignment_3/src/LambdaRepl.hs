@@ -197,9 +197,16 @@ load args = do
 print_bindings :: [String] -> Lambda_Repl ()
 print_bindings _ = do
   bindings <- get_global_bindings
-  let pretty_bindings = fmap PP.print_binding bindings
+  let pretty_bindings = fmap decl_of_binding bindings
   liftIO $ mapM_ (\v -> putStrLn $ "    " ++ v) pretty_bindings
-
+  where
+    -- @Hack: Passing the var name as the expression. Should be more clear.
+    decl_of_binding (L.Binding name expr) = PP.print_type_declaration (L.Var name) expr_type
+      where 
+        expr_type = T.type_expression expr
+    decl_of_binding (L.RecBinding name expr) = PP.print_type_declaration (L.Var name) expr_type
+      where
+        expr_type = T.type_expression expr
 free :: [String] -> Lambda_Repl ()
 free args = 
   if null args 

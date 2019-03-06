@@ -61,19 +61,22 @@ get_label label = do
 run_printer_state :: T.Type -> Doc ann
 run_printer_state expr_type = exec_res
   where
-    exec_res = runIdentity $  evalStateT (print_type expr_type) init_state
+    exec_res = runIdentity $  evalStateT (print_type_doc expr_type) init_state
     init_state = State_Type M.empty 0
 
-print_type :: T.Type -> Printer_State (Doc ann)
-print_type (T.Type_Int) = return $ pretty "Int"
-print_type (T.Type_Bool) = return $ pretty "Bool" 
-print_type (T.Abstraction from_type to_type) = do
-  from_type_doc <- print_type from_type
-  to_type_doc <- print_type to_type
+print_type :: T.Type -> String
+print_type expr_type = show $ run_printer_state expr_type
+
+print_type_doc :: T.Type -> Printer_State (Doc ann)
+print_type_doc (T.Type_Int) = return $ pretty "Int"
+print_type_doc (T.Type_Bool) = return $ pretty "Bool" 
+print_type_doc (T.Abstraction from_type to_type) = do
+  from_type_doc <- print_type_doc from_type
+  to_type_doc <- print_type_doc to_type
   let arrow = pretty "\x21A6"
   return $ sep [from_type_doc, arrow, to_type_doc]
 
-print_type (T.Type_Variable t_var) = do
+print_type_doc (T.Type_Variable t_var) = do
   label_num <- get_label t_var
   return $ pretty $ lowercase_greek_letter_code_point label_num
   where 
