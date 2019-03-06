@@ -66,7 +66,7 @@ parse_and_inject_binding src =
           the_new_state <- get
           liftIO $ putStrLn $ ppShow the_new_state
 
-type_expression_with_global_bindings :: L.Lambda_Expr -> Lambda_Repl T.Type
+type_expression_with_global_bindings :: L.Lambda_Expr -> Lambda_Repl (Either String T.Type)
 type_expression_with_global_bindings lambda = do
   global_bindings <- get_global_bindings
   let expr_type = T.type_expression_with_initial_state global_bindings lambda
@@ -207,12 +207,16 @@ print_bindings _ = do
   liftIO $ mapM_ (\v -> putStrLn $ "    " ++ v) pretty_bindings
   where
     -- @Hack: Passing the var name as the expression. Should be more clear.
-    decl_of_binding (L.Binding name expr) = PP.print_type_declaration (L.Var name) expr_type
-      where 
-        expr_type = T.type_expression expr
-    decl_of_binding (L.RecBinding name expr) = PP.print_type_declaration (L.Var name) expr_type
-      where
-        expr_type = T.type_expression expr
+    decl_of_binding :: L.Binding -> String
+    decl_of_binding (L.Binding name expr) = 
+      case T.type_expression expr of
+        Left err -> err
+        Right expr_type -> PP.print_type_declaration (L.Var name) expr_type
+    decl_of_binding (L.RecBinding name expr) = 
+      case T.type_expression expr of
+        Left err -> err
+        Right expr_type -> PP.print_type_declaration (L.Var name) expr_type
+
 free :: [String] -> Lambda_Repl ()
 free args = 
   if null args 
@@ -229,9 +233,10 @@ print_expression_type args =
     case L.parse_lambda the_lambda of
       Left err -> liftIO $ putStrLn err
       Right ast -> do
-        expr_type <- type_expression_with_global_bindings ast
-        liftIO $ putStrLn $ ("   " ++ PP.print_type_declaration ast expr_type)
-
+        maybe_expr_type <- type_expression_with_global_bindings ast
+        case maybe_expr_type of 
+          Left err -> liftIO $ putStrLn $ "Type Error: " ++ err
+          Right expr_type -> liftIO $ putStrLn $ ("   " ++ PP.print_type_declaration ast expr_type)
 
 -- ****************************************************************************
 --             Command Definition and Autocompletion (Debug Mode)

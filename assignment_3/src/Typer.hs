@@ -7,12 +7,14 @@ module Typer
 
 {-# LANGUAGE TemplateHaskell #-}
 
-import qualified LambdaParser as L
 import Control.Monad.State.Strict
 import Control.Monad.Identity
+import Control.Monad.Except
 import Control.Lens
-import qualified Data.Map as M
 import Text.Show.Pretty
+import qualified Data.Map as M
+
+import qualified LambdaParser as L
 
 -- \x. x
 --
@@ -50,7 +52,7 @@ data Type_State = Type_State
 makeLenses ''Type_State
 
 -- Monad m => StateT s m a
-type Typer_State a = StateT Type_State Identity a
+type Typer_State a = StateT Type_State (ExceptT String Identity) a
 
 mk_empty_type_state :: Type_State
 mk_empty_type_state = Type_State 1 M.empty
@@ -62,11 +64,21 @@ mk_initial_type_state (b:bs) =
   in M.insert binding_ident binding_type rec_call
   where
     process_one_binding :: L.Binding -> (String, Type)
-    process_one_binding (L.Binding name lambda_expr) = (name, type_expression lambda_expr)
-    process_one_binding (L.RecBinding name lambda_expr) = (name, type_expression lambda_expr)
+    process_one_binding (L.Binding name lambda_expr) = (name, expr_type)
+      where
+        (Right expr_type) = type_expression lambda_expr
+    process_one_binding (L.RecBinding name lambda_expr) = (name, expr_type)
+      where
+        (Right expr_type) = type_expression lambda_expr
 
-runTyperState :: Typer_State a -> a
-runTyperState typer_state = runIdentity $ evalStateT typer_state mk_empty_type_state
+runTyperState :: Typer_State a -> Either String a
+runTyperState typer_state = 
+  case exec_result of 
+    Left err -> Left err
+    Right a -> Right a
+  where
+    exec_result = runIdentity $ runExceptT $ evalStateT typer_state mk_empty_type_state
+  
 
 -- ****************************************************************************
 --                          State Manipulation and Access
@@ -298,16 +310,31 @@ occurs_check (Type_Variable _) Type_Bool = False
 -- ****************************************************************************
 --                            Exposed Functions
 -- ****************************************************************************
-type_expression :: L.Lambda_Expr -> Type
-type_expression lambda_expr = expr_type
-  where
-    Type_Introduction vs generated_constraints = 
-      runTyperState (collect_constraints (Type_Variable 0) lambda_expr)
-    unification = unify_constraints generated_constraints
-    unification_result = substitute_over_constraints unification generated_constraints
-    expr_type = apply_substitution unification (Type_Variable 0)
+type_expression :: L.Lambda_Expr -> Either String Type
+-- type_expression lambda_expr = expr_type
+--   where
+--     Type_Introduction vs generated_constraints = 
+--       case typer_exec_result of
+--         Left err_msg -> Left err_msg
+--         Right (Type_Introduction vs generated_constraints) ->
+--     unification = unify_constraints generated_constraints
+--     unification_result constraints = substitute_over_constraints unification constraints
+--     expr_type = apply_substitution unification (Type_Variable 0)
+--     typer_exec_result = runTyperState (collect_constraints (Type_Variable 0) lambda_expr)
 
-type_expression_with_initial_state :: [L.Binding] -> L.Lambda_Expr -> Type
+type_expression lambda_expr = 
+  case typer_exec_result of
+    Left err_msg -> Left err_msg
+    Right (Type_Introduction vs generated_constraints) ->
+      let unification = unify_constraints generated_constraints
+          unification_result = substitute_over_constraints unification generated_constraints
+          expr_type = apply_substitution unification (Type_Variable 0)
+      in Right expr_type
+  where
+    typer_exec_result = runTyperState (collect_constraints (Type_Variable 0) lambda_expr)
+      
+
+type_expression_with_initial_state :: [L.Binding] -> L.Lambda_Expr -> Either String Type
 type_expression_with_initial_state bindings expr = type_expression augmented_expr
   where
     augmented_expr = L.Let bindings expr
