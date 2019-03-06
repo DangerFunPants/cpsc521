@@ -12,6 +12,7 @@ data SECDInstruction
  | Add
  | Sub
  | Mul
+ | Div
  | LEq
  | Eq
  -- Boolean Instructions

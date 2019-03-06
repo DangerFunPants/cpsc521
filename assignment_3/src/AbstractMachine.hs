@@ -273,6 +273,10 @@ deBruijn (L.Mul t1 t2) = do
     t1' <- deBruijn t1
     t2' <- deBruijn t2
     return $ t1' ++ t2' ++ [I.Mul]
+deBruijn (L.Div t1 t2) = do
+  t1' <- deBruijn t1
+  t2' <- deBruijn t2
+  return $ t1' ++ t2' ++ [I.Div]
 deBruijn (L.Conditional cond ifC elseC) = do
     cond' <- deBruijn cond
     ifC'  <- deBruijn ifC
@@ -324,7 +328,6 @@ deBruijn (L.Case expr nil_branch cons_branch) = do
   ST.remLevel
   ST.remLevel
   return $ expr_code ++ [I.Case (nil_code ++ [I.Ret]) (cons_code ++ [I.Ret])]
-
 
 -- ****************************************************************************
 --                            SECD State Transitions
