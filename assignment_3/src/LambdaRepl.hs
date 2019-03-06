@@ -130,7 +130,9 @@ parse args = do
           putStrLn err
         Right lambda_ast -> do
           putStrLn "Lambda Abstract SyntaxTree: "
-          putStrLn $ ppShow $ lambda_ast
+          putStrLn $ (ppShow $ lambda_ast) ++ "\n"
+          putStrLn "Formatted Lambda: "
+          putStrLn $ show $ PP.print_lambda lambda_ast
 
 quit :: [String] -> Lambda_Repl ()
 quit args = abort

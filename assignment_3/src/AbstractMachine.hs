@@ -8,7 +8,6 @@ module AbstractMachine
   , mk_state_for_dbg_execution
   , exec_code_dbg
   , exec_to_completion
-  , compile
   ) where
 
 import Control.Lens
