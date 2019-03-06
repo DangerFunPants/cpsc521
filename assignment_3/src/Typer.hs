@@ -1,4 +1,7 @@
-module Typer where
+module Typer 
+  ( type_expression
+  , Type (..)
+  ) where
 
 {-# LANGUAGE TemplateHaskell #-}
 
@@ -78,6 +81,9 @@ remove_from_env :: String -> Typer_State ()
 remove_from_env var_ident = do
   modify $ over environment (M.delete var_ident)
 
+-- ****************************************************************************
+--                          Constraint Generation
+-- ****************************************************************************
 collect_constraints :: Type -> L.Lambda_Expr -> Typer_State Type_Equation
 -- introduce the contraint that the type at use U(x) is the same 
 -- as the type of the definition D(x). To determine the type of 
@@ -141,7 +147,6 @@ data Substitution
 compose_substitutions :: Substitution -> Substitution -> Substitution
 compose_substitutions EmptySub s = s
 compose_substitutions s EmptySub = s
--- compose_substitutions (Sub s1) (Sub s2) = Sub $ \t -> s2 (s1 t)
 compose_substitutions (Sub s1) (Sub s2) = Sub $ s2 . s1
 
 perform_substitution :: Type -> Type -> Type -> Type
@@ -166,12 +171,14 @@ make_substitution type_to_sub t@(Type_Variable _) = Sub $ \expr -> perform_subst
 apply_substitution :: Substitution -> Type -> Type
 apply_substitution (Sub sub_fn) t = sub_fn t
 
--- Z = X -> Y
--- X = Y
---
--- S1 = {X -> Y/Z}
--- S2 = {X/Y}
+substitute_over_constraints :: Substitution -> [Type_Equation] -> [Type_Equation]
+substitute_over_constraints s cs = fmap map_fn cs
+  where
+    map_fn (Type_Equality lhs rhs) = Type_Equality (apply_substitution s lhs) (apply_substitution s rhs)
 
+-- ****************************************************************************
+--                          Constraint Unification
+-- ****************************************************************************
 unify_constraints :: [Type_Equation] -> Substitution
 unify_constraints [] = EmptySub
 
@@ -207,10 +214,6 @@ unify_constraints ((Type_Equality t t'):cs) =
     then unify_constraints cs
     else error "IDK"
 
-substitute_over_constraints :: Substitution -> [Type_Equation] -> [Type_Equation]
-substitute_over_constraints s cs = fmap map_fn cs
-  where
-    map_fn (Type_Equality lhs rhs) = Type_Equality (apply_substitution s lhs) (apply_substitution s rhs)
 
 occurs_check :: Type -> Type -> Bool
 occurs_check (Type_Variable t1) (Type_Variable t2) = t1 == t2
@@ -219,21 +222,30 @@ occurs_check t1@(Type_Variable _) (Abstraction arg_type body_type) =
 occurs_check (Type_Variable _) Type_Int = False
 occurs_check (Type_Variable _) Type_Bool = False
 
+-- ****************************************************************************
+--                            Exposed Functions
+-- ****************************************************************************
+type_expression :: L.Lambda_Expr -> Type
+type_expression lambda_expr = expr_type
+  where
+    Type_Introduction vs generated_constraints = 
+      runTyperState (collect_constraints (Type_Variable 0) lambda_expr)
+    unification = unify_constraints generated_constraints
+    unification_result = substitute_over_constraints unification generated_constraints
+    expr_type = apply_substitution unification (Type_Variable 0)
+
+
+-- ****************************************************************************
+--                              Adhoc Testing
+-- ****************************************************************************
 main :: IO ()
 main = do
   let ast = L.Abstraction "y" $ L.Abstraction "x" (L.Var "y")
       simple = L.Abstraction "x" (L.Div (L.Var "x") (L.IntLiteral 5))
-      with_int = L.Abstraction "x" $ (L.IntLiteral 5)
+      with_int = L.Abstraction "x" $ L.Add (L.Var "x") (L.IntLiteral 5)
       with_application = L.Application (L.Abstraction "x" (L.Var "x")) (L.IntLiteral 5)
-      (Type_Introduction vs list) = runTyperState (collect_constraints (Type_Variable 0) with_application)
-      (Sub unification) = unify_constraints list
-      unification_result = fmap (map_fn unification) list
-      expr_type = unification (Type_Variable 0)
-  putStrLn $ ppShow (Type_Introduction vs list)
-  putStrLn $ ppShow unification_result
+      expr_type = type_expression with_int
   putStrLn $ "The expression is of type: " ++ (show expr_type)
-  where
-    map_fn unify_fn (Type_Equality lhs rhs) = Type_Equality (unify_fn lhs) (unify_fn rhs)
 
 
 

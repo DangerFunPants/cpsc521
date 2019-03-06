@@ -1,12 +1,83 @@
 module LambdaPrinter where
 
+{-# LANGUAGE TemplateHaskell #-}
+
 import Data.Text.Prettyprint.Doc
 import Data.Text.Prettyprint.Doc.Util
 
 import Text.Show.Pretty
+import Data.Char
+
+import qualified Data.Map as M
+import Control.Lens
+import Control.Monad.State.Strict
+import Control.Monad.Identity
 
 import qualified LambdaParser as L
+import qualified Typer as T
 
+type Printer_State a = StateT State_Type Identity a
+data State_Type = State_Type
+  { _label_map      :: M.Map Int Int
+  , _current_label  :: Int
+  }
+makeLenses ''State_Type
+
+-- ****************************************************************************
+--                          Type Declaration Printer
+-- ****************************************************************************
+print_type_declaration :: L.Lambda_Expr -> T.Type -> String
+print_type_declaration expr expr_type = show $ print_type_declaration_doc expr expr_type
+
+print_type_declaration_doc :: L.Lambda_Expr -> T.Type -> Doc ann
+print_type_declaration_doc expr expr_type = sep [expr_doc, (pretty "::"), type_doc]
+  where
+    expr_doc = print_lambda expr
+    type_doc = run_printer_state expr_type
+
+-- ****************************************************************************
+--                                Type Printer
+-- ****************************************************************************
+
+mk_new_label :: Printer_State Int
+mk_new_label = do
+  st <- get
+  let current = st^.current_label
+  put $ over current_label (+1) st
+  return current
+
+get_label :: Int -> Printer_State Int
+get_label label = do  
+  st <- get
+  let map = st^.label_map
+  case M.lookup label map of
+    Nothing -> do 
+      new_label <- mk_new_label
+      st <- get
+      put $ over label_map (M.insert label new_label) st
+      return new_label
+    (Just new_label) -> return new_label
+
+run_printer_state :: T.Type -> Doc ann
+run_printer_state expr_type = exec_res
+  where
+    exec_res = runIdentity $  evalStateT (print_type expr_type) init_state
+    init_state = State_Type M.empty 0
+
+print_type :: T.Type -> Printer_State (Doc ann)
+print_type (T.Type_Int) = return $ pretty "Int"
+print_type (T.Type_Bool) = return $ pretty "Bool" 
+print_type (T.Abstraction from_type to_type) = do
+  from_type_doc <- print_type from_type
+  to_type_doc <- print_type to_type
+  let arrow = pretty "\x21A6"
+  return $ sep [from_type_doc, arrow, to_type_doc]
+
+print_type (T.Type_Variable t_var) = do
+  label_num <- get_label t_var
+  return $ pretty $ lowercase_greek_letter_code_point label_num
+  where 
+    lowercase_greek_letter_code_point v = chr $ v + 0x03b1
 
 -- ****************************************************************************
 --                          Binding Pretty Printer

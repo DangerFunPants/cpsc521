@@ -14,6 +14,7 @@ import qualified LambdaParser as L
 import qualified AbstractMachine as A
 import qualified SymbolTable as S
 import qualified LambdaPrinter as PP
+import qualified Typer as T
 
 type Repl a = HaskelineT IO a
 type ReplState s a = HaskelineT (StateT s IO) a
@@ -82,6 +83,7 @@ top_level_matcher = [ (":parse"   , listCompleter [])
                     , (":load"    , fileCompleter)
                     , (":print"   , listCompleter [])
                     , (":free"    , listCompleter [])
+                    , (":type"    , listCompleter [])
                     ]
 
 top_level_prefix_completer :: Monad m => WordCompleter m
@@ -94,6 +96,7 @@ top_level_prefix_completer n = do
               , ":load"
               , ":print"
               , ":free"
+              , ":type"
               ]
   return $ filter (isPrefixOf n) names
 
@@ -107,6 +110,7 @@ top_level_opts = [ ("parse"   , parse)
                  , ("load"    , load)
                  , ("print"   , print_bindings)
                  , ("free"    , free)
+                 , ("type"    , print_expression_type)
                  ]
 
 -- ****************************************************************************
@@ -203,6 +207,18 @@ free args =
     else 
       forM_ args (\name_to_free -> do
         clear_global_binding name_to_free)
+
+print_expression_type :: [String] -> Lambda_Repl ()
+print_expression_type args = 
+  case get_lambda_from_args args of
+    Nothing -> liftIO $ (putStrLn "Must provide a lambda.")
+    Just the_lambda -> do
+    case L.parse_lambda the_lambda of
+      Left err -> liftIO $ putStrLn err
+      Right ast -> 
+        let expr_type = T.type_expression ast
+        in liftIO $ putStrLn $ ("   " ++ PP.print_type_declaration ast expr_type)
+
 
 -- ****************************************************************************
 --             Command Definition and Autocompletion (Debug Mode)
