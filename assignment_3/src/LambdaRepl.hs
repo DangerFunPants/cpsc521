@@ -147,16 +147,6 @@ exec args = do
           putStrLn $ "Lambda execution failed:"
           putStrLn err_msg
         (Right (ast, instrs, exec_state, info)) -> liftIO $ do
-          -- putStrLn $ "********************************************************************************"
-          -- putStrLn "Input Source: "
-          -- putStrLn $ the_lambda ++ "\n"
-          -- putStrLn "Compiled Source: "
-          -- putStrLn $ (ppShow ast) ++ "\n"
-          -- putStrLn $ "Instructions: "
-          -- putStrLn $ (ppShow instrs) ++ "\n"
-          -- putStrLn $ "Execution State: " ++ info
-          -- putStrLn $ (ppShow exec_state) ++ "\n"
-          -- putStrLn $ "********************************************************************************"
           show_exec_result exec_state
   where 
     show_exec_result exec_state =
@@ -202,7 +192,7 @@ print_bindings :: [String] -> Lambda_Repl ()
 print_bindings _ = do
   bindings <- get_global_bindings
   let pretty_bindings = fmap PP.print_binding bindings
-  liftIO $ mapM_ putStrLn pretty_bindings
+  liftIO $ mapM_ (\v -> putStrLn $ "    " ++ v) pretty_bindings
 
 free :: [String] -> Lambda_Repl ()
 free args = 
@@ -247,7 +237,8 @@ debug_opts = [ ("next"    , next)
 --                      Command Implementation (Debug Mode)
 -- ****************************************************************************
 debug_cmd :: String -> Debug_Repl ()
-debug_cmd args = undefined
+debug_cmd "n" = next []
+debug_cmd _ = liftIO $ putStrLn "Unrecognized debug command."
 
 next :: [String] -> Debug_Repl ()
 next args = do

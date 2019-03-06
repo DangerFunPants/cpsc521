@@ -8,6 +8,7 @@ module AbstractMachine
   , mk_state_for_dbg_execution
   , exec_code_dbg
   , exec_to_completion
+  , compile
   ) where
 
 import Control.Lens
@@ -464,8 +465,14 @@ step_machine_dbg (I.AppLet num_bindings) = do
   where 
     augment_global_bindings :: [S.StackItem] -> [S.StackItem] -> [S.StackItem]
     augment_global_bindings _ [] = []
-    augment_global_bindings full_list ((S.Closure closure_code env):bs) = 
-      (S.Closure closure_code (full_list ++ env)) : (augment_global_bindings full_list bs)
+    augment_global_bindings full_list (b:bs) = 
+      (augment_one_binding full_list b) : (augment_global_bindings full_list bs)
+
+    augment_one_binding :: [S.StackItem] -> S.StackItem -> S.StackItem
+    augment_one_binding full_list (S.Closure closure_code env) = 
+      S.Closure closure_code (full_list ++ env)
+    augment_one_binding full_list (S.FixClosure closure_code env) = 
+      S.FixClosure closure_code (full_list ++ env)
 
 step_machine_dbg I.Nil = pushStackItem S.Nil
 
@@ -488,12 +495,46 @@ step_machine_dbg (I.Case nil_branch cons_branch) = do
       set_env new_env
       set_code cons_branch
 
+-- ****************************************************************************
+--                              DeSugaring
+-- ****************************************************************************
+desugar :: L.Lambda_Expr -> L.Lambda_Expr
+desugar (L.Let bindings body_expr) = 
+  L.Let (fmap desugar_binding bindings) (desugar body_expr)
+
+desugar (L.Var v) = L.Var v
+desugar (L.Abstraction var_name body_expr) = L.Abstraction var_name (desugar body_expr)
+desugar (L.Application rhs lhs) = L.Application (desugar rhs) (desugar lhs)
+desugar (L.Add lhs rhs) = L.Add (desugar lhs) (desugar rhs)
+desugar (L.Sub lhs rhs) = L.Sub (desugar lhs) (desugar rhs)
+desugar (L.Mul lhs rhs) = L.Mul (desugar lhs) (desugar rhs)
+desugar (L.Div lhs rhs) = L.Div (desugar lhs) (desugar rhs)
+desugar (L.LessThan lhs rhs) = L.LessThan (desugar lhs) (desugar rhs)
+desugar (L.Equal lhs rhs) = L.Equal (desugar lhs) (desugar rhs)
+desugar (L.Conditional pred then_case else_case) =
+  L.Conditional (desugar pred) (desugar then_case) (desugar else_case)
+desugar (L.IntLiteral v) = L.IntLiteral v
+desugar (L.BoolLiteral b) = L.BoolLiteral b
+desugar (L.Fix expr) = L.Fix (desugar expr)
+desugar (L.Cons first rest) = L.Cons (desugar first) (desugar rest)
+desugar (L.Nil) = L.Nil
+desugar (L.Case of_expr nil_expr cons_expr) =
+  L.Case (desugar of_expr) (desugar nil_expr) (desugar cons_expr)
+
+
+desugar_binding :: L.Binding -> L.Binding
+desugar_binding (L.RecBinding name rec_func) = L.Binding name fixed_point
+  where
+    fixed_point = L.Fix $ L.Abstraction name (desugar rec_func)
+desugar_binding (L.Binding name bound_expr) = L.Binding name (desugar bound_expr)
  
 -- ****************************************************************************
 --                              Public API 
 -- ****************************************************************************
 compile :: L.Lambda_Expr -> Either String [I.SECDInstruction]
-compile ast = fst $ (runIdentity . ((flip runStateT) ST.mkInitState) . runExceptT) (deBruijn ast)
+compile ast = fst $ (runIdentity . ((flip runStateT) ST.mkInitState) . runExceptT) (deBruijn desugared_ast)
+  where
+    desugared_ast = desugar ast
 
 parseAndExecuteLambda :: String -> Either String StateType
 parseAndExecuteLambda source = 
@@ -575,6 +616,7 @@ parse_and_compile lambda global_bindings = do
   compile lambda_with_globals
 
 main :: IO ()
+-- let rec fact = \n. if n = 1 then 1 else n * (fact (n - 1)) 5
 main = do
   let tests = [ "(\\x. (x + 2) = 20) if (\\x. false) 1 then 5 else 18"
               , "(\\add. \\x. \\y. add x y)  (\\a. \\b. a + b) 10 20"

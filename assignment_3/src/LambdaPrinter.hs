@@ -18,6 +18,11 @@ print_binding (L.Binding name lambda_expr) = show $ sep [name_doc, pretty ":=", 
     name_doc = pretty name
     lambda_doc = print_lambda lambda_expr
 
+print_binding (L.RecBinding name lambda_expr) = show $ sep [name_doc, pretty ":=", lambda_doc]
+  where
+    name_doc = pretty name
+    lambda_doc = print_lambda lambda_expr
+
 -- ****************************************************************************
 --                          Lambda Pretty Printer
 -- ****************************************************************************

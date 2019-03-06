@@ -45,6 +45,7 @@ data Lambda_Expr
 
 data Binding
   = Binding Name Lambda_Expr
+  | RecBinding Name Lambda_Expr
   deriving (Show, Eq)
 
 data BinaryOperator
@@ -74,6 +75,7 @@ reserved_keywords = [ "if"
                     , "true"
                     , "false"
                     , "let"
+                    , "rec"
                     , "in"
                     , "cons"
                     , "nil"
@@ -115,7 +117,12 @@ parse_lambda_file (x:xs) = do
 --                            Repl Name Binding Parser
 -- ****************************************************************************
 bind_expression_parser :: Parser Binding
-bind_expression_parser = do
+bind_expression_parser = choice $ fmap try [ bind_normal_expression_parser
+                                           , bind_rec_expression_parser
+                                           ]
+
+bind_normal_expression_parser :: Parser Binding
+bind_normal_expression_parser = do
   let_token_parser
   spaces
   lhs <- ident_parser
@@ -125,6 +132,20 @@ bind_expression_parser = do
   rhs <- lambda_parser
   eof
   return $ Binding lhs rhs
+
+bind_rec_expression_parser :: Parser Binding
+bind_rec_expression_parser = do
+  let_token_parser
+  spaces
+  rec_token_parser
+  spaces
+  lhs <- ident_parser
+  spaces
+  binary_equality_parser
+  spaces
+  rhs <- lambda_parser
+  eof
+  return $ RecBinding lhs rhs
 
 parse_expression_binding :: String -> Either String Binding
 parse_expression_binding src = 
@@ -194,13 +215,18 @@ let_binding_parser = do
   return $ Let bindings expression
   where
     binding_parser = do
+      is_rec <- optionMaybe $ try rec_token_parser
+      let the_constructor = case is_rec of
+                              Nothing -> Binding
+                              Just _ -> RecBinding
+      spaces
       name <- ident_parser
       spaces
       binary_equality_parser
       spaces
       expr_to_bind <- lambda_parser
       more_bindings <- more_bindings_parser
-      return $ (Binding name expr_to_bind) : more_bindings
+      return $ (the_constructor name expr_to_bind) : more_bindings
     more_bindings_parser = do
       maybe_separator <- optionMaybe let_binding_separator
       spaces
@@ -429,6 +455,9 @@ nil_token_parser = string "nil" >> return ()
 
 case_token_parser :: Parser ()
 case_token_parser = string "case" >> return ()
+
+rec_token_parser :: Parser ()
+rec_token_parser = string "rec" >> return ()
 
 -- ****************************************************************************
 --                          Exported Functions
