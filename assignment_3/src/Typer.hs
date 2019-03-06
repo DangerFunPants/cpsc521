@@ -94,8 +94,10 @@ lookup_in_env :: String -> Typer_State Type
 lookup_in_env ident = do
   current_state <- get
   let the_env = current_state^.environment
-      (Just ident_type) = M.lookup ident the_env
-  return ident_type
+      maybe_ident_type = M.lookup ident the_env
+  case maybe_ident_type of 
+    Nothing -> lift $ throwError $ "Failed to find identifier " ++ ident
+    Just ident_type -> return ident_type
 
 insert_into_env :: String -> Type -> Typer_State ()
 insert_into_env var_ident var_type = do
