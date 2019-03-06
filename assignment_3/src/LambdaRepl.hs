@@ -147,16 +147,26 @@ exec args = do
           putStrLn $ "Lambda execution failed:"
           putStrLn err_msg
         (Right (ast, instrs, exec_state, info)) -> liftIO $ do
-          putStrLn $ "********************************************************************************"
-          putStrLn "Input Source: "
-          putStrLn $ the_lambda ++ "\n"
-          putStrLn "Compiled Source: "
-          putStrLn $ (ppShow ast) ++ "\n"
-          putStrLn $ "Instructions: "
-          putStrLn $ (ppShow instrs) ++ "\n"
-          putStrLn $ "Execution State: " ++ info
-          putStrLn $ (ppShow exec_state) ++ "\n"
-          putStrLn $ "********************************************************************************"
+          -- putStrLn $ "********************************************************************************"
+          -- putStrLn "Input Source: "
+          -- putStrLn $ the_lambda ++ "\n"
+          -- putStrLn "Compiled Source: "
+          -- putStrLn $ (ppShow ast) ++ "\n"
+          -- putStrLn $ "Instructions: "
+          -- putStrLn $ (ppShow instrs) ++ "\n"
+          -- putStrLn $ "Execution State: " ++ info
+          -- putStrLn $ (ppShow exec_state) ++ "\n"
+          -- putStrLn $ "********************************************************************************"
+          show_exec_result exec_state
+  where 
+    show_exec_result exec_state =
+      if null the_stack
+        then putStrLn $ "Finished execution in an invalid state."
+        else putStrLn $ show pretty_expr
+      where
+        the_stack = A._stack exec_state
+        pretty_expr = head the_stack
+
 
 compile :: [String] -> Lambda_Repl ()
 compile args =

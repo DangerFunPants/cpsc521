@@ -85,8 +85,6 @@ print_binary_op op_cygil lhs rhs = sep [lhs_doc, op_cygil_doc, rhs_doc]
     rhs_doc = print_lambda rhs
     op_cygil_doc = pretty op_cygil
 
-
-
 main :: IO ()
 main = putStrLn "Hola Mundas!"
 

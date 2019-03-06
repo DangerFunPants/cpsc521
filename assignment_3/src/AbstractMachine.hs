@@ -287,18 +287,24 @@ deBruijn (L.Equal t1 t2) = do
   t2' <- deBruijn t2
   return $ t1' ++ t2' ++ [I.Eq]
 deBruijn (L.Let bindings expr) = do
+  pre_process_bindings bindings
   let_bindings <- create_bindings bindings
   expr_code <- deBruijn expr
   forM_ [1..(length bindings)] (\_ -> ST.remLevel)
   return $ let_bindings ++ [I.LetBinding (expr_code ++ [I.Ret])] ++ [I.AppLet (length bindings)]
   where
+    create_bindings [] = return []
     create_bindings ((L.Binding name expr):rest) = do
-      ST.addLevel
-      ST.insertSym name "var"
+      -- ST.addLevel
+      -- ST.insertSym name "var"
       expr_code <- deBruijn expr
       rec_call <- create_bindings rest
       return $ expr_code ++ rec_call
-    create_bindings [] = return []
+    pre_process_bindings [] = return ()
+    pre_process_bindings ((L.Binding name expr):rest) = do
+      ST.addLevel
+      ST.insertSym name "var"
+      pre_process_bindings rest
 
 deBruijn L.Nil = return [I.Nil]
 
@@ -384,9 +390,6 @@ step_machine_dbg (I.Eq) = do
 --  (1) Code pointer should be the code of the closure
 --  (2) Environment should be the environment extracted from the closure plus the arg
 --  (3) Push a new closure containing the old code pointer and teh old environemnt
---
---  New things
--- aset_code, get_code 
 step_machine_dbg (I.App) = do
   closure <- popStackItem
   case closure of
@@ -452,11 +455,17 @@ step_machine_dbg (I.AppLet num_bindings) = do
       old_env <- get_env
       let new_closure = S.Closure old_code old_env
       binding_vals <- pop_n_stack_items num_bindings
-      let the_new_env = binding_vals ++ env
+      let the_new_env = augmented_global_bindings ++ env
+          augmented_global_bindings = augment_global_bindings binding_vals binding_vals
       set_env the_new_env
       set_code expr_code
       pushStackItem new_closure
     otherwise -> throwE $ "Expected closure got: " ++ (show let_binding)
+  where 
+    augment_global_bindings :: [S.StackItem] -> [S.StackItem] -> [S.StackItem]
+    augment_global_bindings _ [] = []
+    augment_global_bindings full_list ((S.Closure closure_code env):bs) = 
+      (S.Closure closure_code (full_list ++ env)) : (augment_global_bindings full_list bs)
 
 step_machine_dbg I.Nil = pushStackItem S.Nil
 
@@ -509,7 +518,7 @@ show_debug_information src = do
 
 execute_lambda_and_show_state 
   :: String 
-  -> [L.Binding]
+  -> [L.Binding] 
   -> Bool 
   -> Either String (L.Lambda_Expr, [I.SECDInstruction], StateType, String) 
 execute_lambda_and_show_state src global_bindings enable_dbg = do
@@ -579,22 +588,4 @@ main = do
               , "let list = cons 1 (cons 2 (cons 3 nil)) in case (list) ((\\x. x) 10) (tail)"
               ]
   execute_tests tests
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
