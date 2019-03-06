@@ -266,21 +266,26 @@ substitute_over_constraints s cs = fmap map_fn cs
 -- ****************************************************************************
 --                          Constraint Unification
 -- ****************************************************************************
-unify_constraints :: [Type_Equation] -> Substitution
-unify_constraints [] = EmptySub
+type Unify a = ExceptT String Identity a
+
+runUnify :: Unify a -> Either String a
+runUnify = (runIdentity . runExceptT)
+
+unify_constraints :: [Type_Equation] -> Unify Substitution
+unify_constraints [] = return EmptySub
 
 unify_constraints ((Type_Equality (Type_Variable x) t'):xs) = 
   case occurs_check (Type_Variable x) t' of
-    True -> error "occurs_check"
-    False -> compose_substitutions the_substitution (unify_constraints new_constraints)
+    True -> throwError "Failed occurs check."
+    False -> (unify_constraints new_constraints) >>= return . (compose_substitutions the_substitution)
   where
     the_substitution = make_substitution t' (Type_Variable x)
     new_constraints = substitute_over_constraints the_substitution xs
  
 unify_constraints ((Type_Equality t (Type_Variable x)):xs) = 
   case occurs_check (Type_Variable x) t of
-    True -> error "occurs_check"
-    False -> compose_substitutions the_substitution (unify_constraints new_constraints)
+    True -> throwError "Failed occurs check."
+    False -> (unify_constraints new_constraints) >>= return . (compose_substitutions the_substitution)
   where
     the_substitution = make_substitution t (Type_Variable x)
     new_constraints = substitute_over_constraints the_substitution xs
@@ -299,7 +304,7 @@ unify_constraints (
 unify_constraints ((Type_Equality t t'):cs) = 
   if t == t'
     then unify_constraints cs
-    else error "Failed to type expression."
+    else throwError $ "Failed to type expression. Expected " ++ (show t') ++ " but got " ++ (show t)
 
 
 occurs_check :: Type -> Type -> Bool
@@ -328,10 +333,12 @@ type_expression lambda_expr =
   case typer_exec_result of
     Left err_msg -> Left err_msg
     Right (Type_Introduction vs generated_constraints) ->
-      let unification = unify_constraints generated_constraints
-          unification_result = substitute_over_constraints unification generated_constraints
-          expr_type = apply_substitution unification (Type_Variable 0)
-      in Right expr_type
+      case runUnify $ unify_constraints generated_constraints of
+        Left err_msg -> Left err_msg
+        Right unification -> 
+          let unification_result = substitute_over_constraints unification generated_constraints
+              expr_type = apply_substitution unification (Type_Variable 0)
+          in Right expr_type
   where
     typer_exec_result = runTyperState (collect_constraints (Type_Variable 0) lambda_expr)
       
