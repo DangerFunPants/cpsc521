@@ -1,6 +1,8 @@
 module Typer 
   ( type_expression
   , Type (..)
+  , mk_initial_type_state
+  , type_expression_with_initial_state
   ) where
 
 {-# LANGUAGE TemplateHaskell #-}
@@ -53,6 +55,16 @@ type Typer_State a = StateT Type_State Identity a
 mk_empty_type_state :: Type_State
 mk_empty_type_state = Type_State 1 M.empty
 
+mk_initial_type_state :: [L.Binding] -> M.Map String Type
+mk_initial_type_state (b:bs) = 
+  let (binding_ident, binding_type) = process_one_binding b
+      rec_call = mk_initial_type_state bs
+  in M.insert binding_ident binding_type rec_call
+  where
+    process_one_binding :: L.Binding -> (String, Type)
+    process_one_binding (L.Binding name lambda_expr) = (name, type_expression lambda_expr)
+    process_one_binding (L.RecBinding name lambda_expr) = (name, type_expression lambda_expr)
+
 runTyperState :: Typer_State a -> a
 runTyperState typer_state = runIdentity $ evalStateT typer_state mk_empty_type_state
 
@@ -93,6 +105,13 @@ collect_constraints use_type (L.Var var_ident) = do
   let the_constraint = Type_Equality defined_type use_type
   return $ Type_Introduction [] [the_constraint]
 
+collect_constraints use_type (L.Let bindings expr_body) = do
+  Type_Introduction _ binding_constraints <- collect_constraints_from_bindings bindings
+  body_type <- create_type_variable
+  Type_Introduction _ body_constraints <- collect_constraints body_type expr_body
+  let the_constraints = (Type_Equality use_type body_type) : (binding_constraints ++ body_constraints)
+  return $ Type_Introduction [] the_constraints
+
 collect_constraints use_type (L.Abstraction var_ident expr_body) = do
   from_type <- create_type_variable
   to_type <- create_type_variable
@@ -132,6 +151,26 @@ collect_constraints use_type (L.Mul lhs_expr rhs_expr) =
 collect_constraints use_type (L.Div lhs_expr rhs_expr) = 
   collect_constraints_for_int_bin_op use_type lhs_expr rhs_expr
 
+collect_constraints use_type (L.LessThan lhs_expr rhs_expr) =
+  collect_constraints_for_bool_bin_op use_type lhs_expr rhs_expr
+
+collect_constraints use_type (L.Equal lhs_expr rhs_expr) = 
+  collect_constraints_for_bool_bin_op use_type lhs_expr rhs_expr
+
+collect_constraints use_type (L.Conditional pred then_expr else_expr) = do
+  Type_Introduction _ pred_constraints <- collect_constraints Type_Bool pred
+  then_type <- create_type_variable
+  else_type <- create_type_variable
+  Type_Introduction _ then_constraints <- collect_constraints then_type then_expr
+  Type_Introduction _ else_constraints <- collect_constraints else_type else_expr
+  let the_constraints = [ Type_Equality then_type else_type
+                        , Type_Equality use_type then_type
+                        ]
+                        ++ pred_constraints
+                        ++ then_constraints
+                        ++ else_constraints
+  return $ Type_Introduction [] the_constraints
+
 collect_constraints_for_int_bin_op 
   :: Type -> L.Lambda_Expr -> L.Lambda_Expr -> Typer_State Type_Equation
 collect_constraints_for_int_bin_op use_type lhs_expr rhs_expr = do
@@ -140,6 +179,40 @@ collect_constraints_for_int_bin_op use_type lhs_expr rhs_expr = do
   let the_constraint = Type_Equality use_type Type_Int
   return $ Type_Introduction [] (the_constraint : (lhs_constraints ++ rhs_constraints))
 
+collect_constraints_for_bool_bin_op
+  :: Type -> L.Lambda_Expr -> L.Lambda_Expr -> Typer_State Type_Equation
+collect_constraints_for_bool_bin_op use_type lhs_expr rhs_expr= do
+  lhs_type <- create_type_variable
+  rhs_type <- create_type_variable
+  Type_Introduction _ lhs_constraints <- collect_constraints lhs_type lhs_expr
+  Type_Introduction _ rhs_constraints <- collect_constraints rhs_type rhs_expr
+  let the_constraints = [ Type_Equality Type_Bool use_type
+                        , Type_Equality lhs_type rhs_type
+                        ]
+  return $ Type_Introduction [] (the_constraints ++ (lhs_constraints ++ rhs_constraints))
+
+collect_constraints_from_bindings :: [L.Binding] -> Typer_State Type_Equation
+collect_constraints_from_bindings [] = return $ Type_Introduction [] []
+collect_constraints_from_bindings (b:bs) = do
+  Type_Introduction _ constraints <- collect_constraints_from_one_binding b
+  Type_Introduction _ rec_call <- collect_constraints_from_bindings bs
+  return $ Type_Introduction [] (constraints ++ rec_call)
+
+collect_constraints_from_one_binding :: L.Binding -> Typer_State Type_Equation
+collect_constraints_from_one_binding (L.Binding name expr) = do
+  expr_type <- create_type_variable
+  Type_Introduction _ expr_constraints <- collect_constraints expr_type expr
+  insert_into_env name expr_type
+  return $ Type_Introduction [] expr_constraints
+collect_constraints_from_one_binding (L.RecBinding name expr) = do
+  expr_type <- create_type_variable
+  Type_Introduction _ expr_constraints <- collect_constraints expr_type expr
+  insert_into_env name expr_type
+  return $ Type_Introduction [] expr_constraints
+
+-- ****************************************************************************
+--                              Substitutions
+-- ****************************************************************************
 data Substitution 
   = EmptySub
   | Sub (Type -> Type)
@@ -161,7 +234,7 @@ perform_substitution tv@(Type_Variable x) type_to_sub (Abstraction arg_t body_t)
     body_sub =(perform_substitution tv type_to_sub body_t)
 
 perform_substitution (Type_Variable x) type_to_sub (Type_Int) = Type_Int
-perform_substitution (Type_Variable x) type_to_sub (Type_Bool) = Type_Int
+perform_substitution (Type_Variable x) type_to_sub (Type_Bool) = Type_Bool
 
 perform_substitution t1 t2 t3 = error $ show $ fmap show [t1, t2, t3]
 
@@ -212,7 +285,7 @@ unify_constraints (
 unify_constraints ((Type_Equality t t'):cs) = 
   if t == t'
     then unify_constraints cs
-    else error "IDK"
+    else error "Failed to type expression."
 
 
 occurs_check :: Type -> Type -> Bool
@@ -234,7 +307,11 @@ type_expression lambda_expr = expr_type
     unification_result = substitute_over_constraints unification generated_constraints
     expr_type = apply_substitution unification (Type_Variable 0)
 
-
+type_expression_with_initial_state :: [L.Binding] -> L.Lambda_Expr -> Type
+type_expression_with_initial_state bindings expr = type_expression augmented_expr
+  where
+    augmented_expr = L.Let bindings expr
+    
 -- ****************************************************************************
 --                              Adhoc Testing
 -- ****************************************************************************

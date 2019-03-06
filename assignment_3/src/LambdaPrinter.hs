@@ -87,15 +87,27 @@ print_type_doc (T.Type_Variable t_var) = do
 -- ****************************************************************************
 -- let add = \x. \y. x + y
 print_binding :: L.Binding -> String
-print_binding (L.Binding name lambda_expr) = show $ sep [name_doc, pretty ":=", lambda_doc]
+print_binding binding = show $ print_binding_doc binding
+
+print_binding_doc :: L.Binding -> Doc ann
+print_binding_doc (L.Binding name lambda_expr) = sep [name_doc, pretty ":=", lambda_doc]
   where
     name_doc = pretty name
     lambda_doc = print_lambda lambda_expr
 
-print_binding (L.RecBinding name lambda_expr) = show $ sep [name_doc, pretty ":=", lambda_doc]
+print_binding_doc (L.RecBinding name lambda_expr) = sep [name_doc, pretty ":=", lambda_doc]
   where
     name_doc = pretty name
     lambda_doc = print_lambda lambda_expr
+
+print_bindings_doc :: [L.Binding] -> Doc ann
+print_bindings_doc bindings = sep $ zipWith (<+>) (pretty "" : repeat (pretty ";")) pretty_bindings
+  where
+    pretty_bindings = fmap print_binding_doc bindings
+
+print_bindings :: [L.Binding] -> String
+print_bindings = show . print_bindings_doc
+
 
 -- ****************************************************************************
 --                          Lambda Pretty Printer
@@ -130,7 +142,6 @@ print_lambda (L.LessThan lhs rhs) = print_binary_op "<" lhs rhs
 print_lambda (L.Equal lhs rhs) = print_binary_op "=" lhs rhs
 
 print_lambda (L.Conditional predicate then_expr else_expr) =
-  -- sep [pretty "if", pred_doc, pretty "then", then_doc, pretty "else", else_doc]
   if_tok <+> (align (vsep [pred_doc, sep [then_tok, then_doc], sep [else_tok, else_doc]]))
   where
     if_tok    = pretty "if"
@@ -146,7 +157,17 @@ print_lambda (L.BoolLiteral b) = pretty b
 
 print_lambda (L.Fix expr) = undefined
 
-print_lambda (L.Let bindings expr_body) = undefined
+print_lambda (L.Let bindings expr_body) = sep binding_list
+  where
+    let_doc = pretty "let"
+    bindings_doc = print_bindings_doc bindings
+    in_doc = pretty "in"
+    expr_body_doc = print_lambda expr_body
+    binding_list = [ let_doc
+                   , bindings_doc
+                   , in_doc
+                   , expr_body_doc
+                   ]
 
 print_lambda (L.Cons first rest) = undefined
 
