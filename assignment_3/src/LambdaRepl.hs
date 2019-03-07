@@ -29,7 +29,8 @@ type ReplState s a = HaskelineT (StateT s IO) a
 -- @Cleanup: Thus has to be at the top of the file in order for the makeLenses
 -- splice to be visible. Should move to another file or something.
 data Repl_State = Repl_State
-  { _global_bindings :: [L.Binding]
+  { _global_bindings    :: [L.Binding]
+  , _type_declarations  :: [L.Lambda_Declaration]
   } 
   deriving (Show, Eq)
 makeLenses ''Repl_State

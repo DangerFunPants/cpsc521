@@ -5,6 +5,7 @@ module LambdaParser
   , parse_lambda_file
   , Lambda_Expr (..)
   , Binding (..)
+  , Lambda_Declaration (..)
   ) where
 
 import Text.Parsec.Char
@@ -41,6 +42,7 @@ data Lambda_Expr
   | Cons Lambda_Expr Lambda_Expr
   | Nil
   | Case Lambda_Expr Lambda_Expr Lambda_Expr
+  | User_Type_Instantiation String [Lambda_Expr]
   deriving (Show, Eq)
 
 data Binding
@@ -66,6 +68,10 @@ data Type
   = Type_Int
   | Type_Bool
   | Type_User String
+  deriving (Show, Eq)
+
+data Lambda_File
+  = Lambda_File [Lambda_Declaration] [Binding]
   deriving (Show, Eq)
 
 -- ParsecT s u m a
@@ -198,6 +204,30 @@ parse_lambda_file (x:xs) = do
         Nothing -> parse_lambda_file xs
         Just binding -> binding : (parse_lambda_file xs)
 
+new_lambda_file_parser :: Parser Lambda_File
+new_lambda_file_parser = do
+  maybe_declaration <- optionMaybe $ try declaration_parser
+  case maybe_declaration of
+    Nothing -> do
+      maybe_binding <- optionMaybe $ try bind_expression_parser
+      case maybe_binding of
+        Nothing -> do
+          spaces
+          eof
+          return $ Lambda_File [] []
+        (Just binding) -> do
+          Lambda_File declarations bindings <- new_lambda_file_parser
+          return $ Lambda_File declarations (binding : bindings)
+    (Just declaration) -> do
+      Lambda_File declarations bindings <- new_lambda_file_parser
+      return $ Lambda_File (declaration : declarations) bindings
+
+parse_new_lambda_file :: String -> Either String Lambda_File
+parse_new_lambda_file source =
+  case parse new_lambda_file_parser "" source of
+    Left err -> Left $ show err
+    Right lambda_file -> Right lambda_file
+
 -- ****************************************************************************
 --                            Repl Name Binding Parser
 -- ****************************************************************************
@@ -267,6 +297,7 @@ lambda_parser = do
                             , binary_expression_parser
                             , bracketed_expression_parser
                             , abs_parser
+                            , user_type_instantiation_parser
                             , literal_parser
                             , var_parser
                             ]
@@ -444,6 +475,39 @@ literal_parser = do
                                    ]
   return the_literal
 
+user_type_instantiation_parser :: Parser Lambda_Expr
+user_type_instantiation_parser = do
+  constructor_name <- constructor_name_parser
+  spaces
+  constructor_args <- constructor_args_parser
+  return $ User_Type_Instantiation constructor_name constructor_args
+  where
+    constructor_args_parser :: Parser [Lambda_Expr]
+    constructor_args_parser = do
+      this_arg <- parse_one_constructor_arg
+      case this_arg of
+        Nothing -> return []
+        (Just the_expr) -> do
+          rec_call <- constructor_args_parser 
+          return $ the_expr : rec_call
+
+    parse_one_constructor_arg :: Parser (Maybe Lambda_Expr)
+    parse_one_constructor_arg = do  
+      spaces
+      expr <- optionMaybe $ choice $ fmap try [ case_expression_parser
+                                              , conditional_parser
+                                              , binary_expression_parser
+                                              , bracketed_expression_parser
+                                              , abs_parser
+                                              , user_type_instantiation_parser
+                                              , literal_parser
+                                              , var_parser
+                                              ]
+      spaces
+      return expr
+      
+
+list_literal_parser :: Parser Lambda_Expr
 list_literal_parser = do
   list_literal <- choice $ fmap try [cons_parser, nil_parser]
   return list_literal
@@ -595,6 +659,7 @@ test_source_parsing = do
             , "\\x. let lst = cons 1 nil in lst"
             , "case (cons 5 nil) (\\x. 5) (\\y. 5)"
             , "let v = cons 5 nil in case (v) (\\x. head) (\\y. 5)"
+            , "My_Type_Constructor true 1 false 3 (My_Other_Constructor 5 6) (a_function_call 5 6 7)"
             ]
   forM_ src (\src_i -> do
     putStrLn "Original Source: "
@@ -610,10 +675,20 @@ print_one_parsed_declaration source =
     Left err -> putStrLn err
     Right data_declaration -> putStrLn $ ppShow data_declaration
 
-main :: IO ()
-main = do
+test_declaration_parsing :: IO ()
+test_declaration_parsing = do
   let tests = [ "data My_Type \n= Data_Cons_One Int\n| Data_Cons_Two Bool Int"
               , "data My_Type = Product_Of_Two_Ints Int My_Type | Product_Of_Bool_And_Int Bool Int"
               ]
   mapM_ print_one_parsed_declaration tests
+
+test_file_parsing :: IO ()
+test_file_parsing = do
+  the_file <- readFile "./datatypes.lambda"
+  putStrLn $ ppShow $ parse_new_lambda_file the_file
+
+
+main :: IO ()
+main = do
+  test_file_parsing
 
