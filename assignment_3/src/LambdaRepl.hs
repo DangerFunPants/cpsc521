@@ -109,16 +109,13 @@ mk_init_state_for_lambda = Repl_State []
 lambda_repl_init :: Lambda_Repl ()
 lambda_repl_init = return ()
 
--- global_symbol_completer :: (MonadIO m, MonadState Repl_State m) => String -> CompletionFunc m
--- global_symbol_completer s (s1, s2) = do
---   global_symbol_names <- get_global_symbol_names
---   listCompleter global_symbol_names
-
--- global_symbol_completer :: CompletionFunc m
+global_symbol_completer :: (MonadState Repl_State m) => CompletionFunc m
 global_symbol_completer (s1, s2) = do
-  -- let bindings = st^.global_bindings
   st <- get
   let ns = bindings_to_names (st^.global_bindings)
+  -- ns <- get_global_symbol_names
+  -- Why does the above line not work? 
+  --  st :: Repl_State
   listCompleter ns (s1, s2)
 
 -- top_level_matcher :: (MonadIO m, MonadState Repl_State m) => [(String, CompletionFunc m)]
@@ -130,7 +127,7 @@ top_level_matcher = completer_list
                      , (":compile" , listCompleter [])
                      , (":debug"   , global_symbol_completer)
                      , (":load"    , fileCompleter)
-                     , (":print"   , listCompleter [])
+                     , (":print"   , global_symbol_completer)
                      , (":free"    , global_symbol_completer)
                      , (":type"    , global_symbol_completer)
                      ]
