@@ -57,6 +57,17 @@ data BinaryOperator
   | BinaryEquality
   deriving (Show, Eq)
 
+-- Type Declarations are not expressions as such
+data Lambda_Declaration
+  = Type_Declaration Type [(String, [Type])] 
+  deriving (Show, Eq)
+
+data Type
+  = Type_Int
+  | Type_Bool
+  | Type_User String
+  deriving (Show, Eq)
+
 -- ParsecT s u m a
 -- s: stream input type
 -- u: user state
@@ -81,6 +92,80 @@ reserved_keywords = [ "if"
                     , "nil"
                     , "case"
                     ]
+
+reserved_type_names :: [String]
+reserved_type_names = [ "Int"
+                      , "Bool"
+                      ]
+
+-- ****************************************************************************
+--                              Declaration Parser
+-- ****************************************************************************
+-- data My_Data_Type = Cons_One Int | Cons_Two Bool Int
+declaration_parser :: Parser Lambda_Declaration
+declaration_parser = do 
+  data_token_parser
+  spaces
+  data_type_name <- type_name_parser
+  spaces
+  binary_equality_parser
+  spaces
+  constructor_list <- constructor_definition_parser
+  spaces
+  return $ Type_Declaration data_type_name constructor_list
+
+constructor_definition_parser :: Parser [(String, [Type])]
+constructor_definition_parser = do
+  constructor_name <- constructor_name_parser
+  spaces
+  cons_type_list <- constructor_type_list_parser
+  spaces
+  maybe_pipe <- optionMaybe $ char '|'
+  spaces
+  case maybe_pipe of 
+    Nothing -> return $ [(constructor_name, cons_type_list)]
+    Just _ -> do
+      rec_call <- constructor_definition_parser
+      return $ (constructor_name, cons_type_list) : rec_call
+
+constructor_type_list_parser :: Parser [Type]
+constructor_type_list_parser = do
+  constructor_type_list <- many1 $ type_name_or_spaces
+  return constructor_type_list
+  where
+    type_name_or_spaces = do
+      spaces
+      the_type_name <- type_name_parser
+      spaces
+      return the_type_name
+
+type_name_parser :: Parser Type
+type_name_parser = do
+  first_char <- upper
+  rest <- many $ choice [letter, char '_']
+  let the_type_name = first_char : rest
+  if the_type_name `elem` reserved_keywords
+    then parserZero
+    else 
+      case the_type_name of
+        "Int" -> return Type_Int
+        "Bool" -> return Type_Bool
+        otherwise -> return $ Type_User the_type_name
+
+constructor_name_parser :: Parser String
+constructor_name_parser = do
+  first_char <- upper
+  rest <- many $ choice [letter, char '_']
+  let the_constructor_name = first_char : rest
+  if the_constructor_name `elem` reserved_type_names
+    then parserZero
+    else return the_constructor_name
+
+parse_data_declaration :: String -> Either String Lambda_Declaration
+parse_data_declaration s = 
+  case parse declaration_parser "" s of
+    Left err -> Left $ show err
+    Right declaration -> Right declaration
 
 -- ****************************************************************************
 --                        Lambda Definition File Parser
@@ -461,6 +546,9 @@ case_token_parser = string "case" >> return ()
 rec_token_parser :: Parser ()
 rec_token_parser = string "rec" >> return ()
 
+data_token_parser :: Parser ()
+data_token_parser = string "data" >> return ()
+
 -- ****************************************************************************
 --                          Exported Functions
 -- ****************************************************************************
@@ -482,8 +570,8 @@ print_one_parsed_lambda src = do
     Left err -> putStrLn err
     Right ast -> putStrLn $ ppShow ast
 
-main :: IO ()
-main = do
+test_source_parsing :: IO ()
+test_source_parsing = do
   let src = [ "\\x. (1 + 2 * 3 / 4) 5"
             , "\\x. 1 + 2 * 3 / 4 5"
             , "\\x. 4 * (2 + 3)"
@@ -515,4 +603,17 @@ main = do
     putStrLn $ "Parsed Source: "
     print_one_parsed_lambda src_i
     putStrLn "\n\n")
+
+print_one_parsed_declaration :: String -> IO ()
+print_one_parsed_declaration source = 
+  case parse_data_declaration source of
+    Left err -> putStrLn err
+    Right data_declaration -> putStrLn $ ppShow data_declaration
+
+main :: IO ()
+main = do
+  let tests = [ "data My_Type \n= Data_Cons_One Int\n| Data_Cons_Two Bool Int"
+              , "data My_Type = Product_Of_Two_Ints Int My_Type | Product_Of_Bool_And_Int Bool Int"
+              ]
+  mapM_ print_one_parsed_declaration tests
 
