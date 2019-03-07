@@ -96,7 +96,10 @@ lookup_in_env ident = do
   let the_env = current_state^.environment
       maybe_ident_type = M.lookup ident the_env
   case maybe_ident_type of 
-    Nothing -> lift $ throwError $ "Failed to find identifier " ++ ident
+    Nothing -> lift $ throwError $ 
+      "Failed to find identifier " ++ ident ++ "\n"
+      ++ "Current typer state: \n" 
+      ++ (show current_state)
     Just ident_type -> return ident_type
 
 insert_into_env :: String -> Type -> Typer_State ()
@@ -318,17 +321,6 @@ occurs_check (Type_Variable _) Type_Bool = False
 --                            Exposed Functions
 -- ****************************************************************************
 type_expression :: L.Lambda_Expr -> Either String Type
--- type_expression lambda_expr = expr_type
---   where
---     Type_Introduction vs generated_constraints = 
---       case typer_exec_result of
---         Left err_msg -> Left err_msg
---         Right (Type_Introduction vs generated_constraints) ->
---     unification = unify_constraints generated_constraints
---     unification_result constraints = substitute_over_constraints unification constraints
---     expr_type = apply_substitution unification (Type_Variable 0)
---     typer_exec_result = runTyperState (collect_constraints (Type_Variable 0) lambda_expr)
-
 type_expression lambda_expr = 
   case typer_exec_result of
     Left err_msg -> Left err_msg
@@ -342,7 +334,6 @@ type_expression lambda_expr =
   where
     typer_exec_result = runTyperState (collect_constraints (Type_Variable 0) lambda_expr)
       
-
 type_expression_with_initial_state :: [L.Binding] -> L.Lambda_Expr -> Either String Type
 type_expression_with_initial_state bindings expr = type_expression augmented_expr
   where

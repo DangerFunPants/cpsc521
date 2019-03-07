@@ -50,7 +50,7 @@ get_filepath_from_args = get_lambda_from_args
 --                            State Helpers
 -- ****************************************************************************
 add_global_binding :: L.Binding -> Lambda_Repl ()
-add_global_binding binding = modify $ (over global_bindings (binding :))
+add_global_binding binding = modify $ (over global_bindings (++ [binding]))
 
 add_global_bindings :: [L.Binding] -> Lambda_Repl ()
 add_global_bindings binding_list = modify $ (over global_bindings (binding_list ++))
@@ -87,10 +87,15 @@ parse_and_inject_binding src =
     Just the_lambda ->
       case L.parse_expression_binding the_lambda of
         Left err -> liftIO $ putStrLn err
-        Right binding -> do
-          add_global_binding binding
-          the_new_state <- get
-          liftIO $ putStrLn $ ppShow the_new_state
+        Right (L.Binding name expr) -> do
+          expr_type <- type_expression_with_global_bindings expr
+          case expr_type of
+            Left type_error -> liftIO $ putStrLn type_error
+            Right _ -> do
+              liftIO $ putStrLn $ "Type: " ++ (show expr_type)
+              add_global_binding (L.Binding name expr)
+              the_new_state <- get
+              liftIO $ putStrLn $ ppShow the_new_state
 
 type_expression_with_global_bindings :: L.Lambda_Expr -> Lambda_Repl (Either String T.Type)
 type_expression_with_global_bindings lambda = do
@@ -118,7 +123,7 @@ global_symbol_completer (s1, s2) = do
   --  st :: Repl_State
   listCompleter ns (s1, s2)
 
--- top_level_matcher :: (MonadIO m, MonadState Repl_State m) => [(String, CompletionFunc m)]
+top_level_matcher :: (MonadIO m, MonadState Repl_State m) => [(String, CompletionFunc m)]
 top_level_matcher = completer_list
   where
     completer_list = [ (":parse"   , listCompleter [])
@@ -130,6 +135,7 @@ top_level_matcher = completer_list
                      , (":print"   , global_symbol_completer)
                      , (":free"    , global_symbol_completer)
                      , (":type"    , global_symbol_completer)
+                     , (":bindings", listCompleter [])
                      ]
 
 top_level_prefix_completer :: (Monad m, MonadState Repl_State m) => WordCompleter m
@@ -143,6 +149,7 @@ top_level_prefix_completer n = do
               , ":print"
               , ":free"
               , ":type"
+              , ":bindings"
               ]
   return $ filter (isPrefixOf n) names
 
@@ -157,6 +164,7 @@ top_level_opts = [ ("parse"   , parse)
                  , ("print"   , print_bindings)
                  , ("free"    , free)
                  , ("type"    , print_expression_type)
+                 , ("bindings", print_bindings_with_no_types)
                  ]
 
 -- ****************************************************************************
@@ -278,6 +286,11 @@ print_expression_type args =
           Left err -> liftIO $ putStrLn $ "Type Error: " ++ err
           Right expr_type -> liftIO $ putStrLn $ ("   " ++ PP.print_type_declaration ast expr_type)
 
+print_bindings_with_no_types :: [String] -> Lambda_Repl ()
+print_bindings_with_no_types args = do
+  bindings <- get_global_bindings
+  liftIO $ putStrLn $ ppShow bindings
+
 -- ****************************************************************************
 --             Command Definition and Autocompletion (Debug Mode)
 -- ****************************************************************************
@@ -336,12 +349,13 @@ continue :: [String] -> Debug_Repl ()
 continue args = do
   current_state <- get
   case A.exec_to_completion current_state of  
-    Left (err_msg, err_state) -> liftIO $ do 
-      putStrLn err_msg
-      putStrLn $ ppShow err_state
+    Left (err_msg, err_state) -> do 
+      liftIO $ putStrLn err_msg
+      liftIO $ putStrLn $ ppShow err_state
+      abort
     Right success_state -> do
       liftIO $ putStrLn $ ppShow success_state
-  abort
+      abort
 
 quit_debug :: [String] -> Debug_Repl ()
 quit_debug args = abort

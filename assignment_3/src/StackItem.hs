@@ -4,11 +4,6 @@ module StackItem
 
 import Instruction as I
 
--- data StackList a
---     = Cons a (StackList a)
---     | Nil
---     deriving (Show, Eq)
-
 data StackItem
     = IVal Int
     | BVal Bool

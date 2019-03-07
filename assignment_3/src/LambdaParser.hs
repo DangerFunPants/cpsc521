@@ -387,7 +387,9 @@ nil_parser = nil_token_parser >> return Nil
 -- ****************************************************************************
 ident_parser :: Parser String
 ident_parser = do
-  the_ident <- many1 letter
+  first_character <- choice $ fmap try [lower, char '_']
+  rest <- many $ choice $ fmap try [letter, char '_']
+  let the_ident = first_character : rest
   if not $ the_ident `elem` reserved_keywords
     then return the_ident
     else parserZero

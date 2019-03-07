@@ -475,6 +475,7 @@ step_machine_dbg (I.AppLet num_bindings) = do
       S.Closure closure_code (full_list ++ env)
     augment_one_binding full_list (S.FixClosure closure_code env) = 
       S.FixClosure closure_code (full_list ++ env)
+    augment_one_binding full_list other = other
 
 step_machine_dbg I.Nil = pushStackItem S.Nil
 
