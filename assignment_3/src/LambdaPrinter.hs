@@ -82,6 +82,8 @@ print_type_doc (T.Type_Variable t_var) = do
   where 
     lowercase_greek_letter_code_point v = chr $ v + 0x03b1
 
+print_type_doc (T.Type_User type_name) = return $ pretty type_name
+
 -- ****************************************************************************
 --                          Binding Pretty Printer
 -- ****************************************************************************

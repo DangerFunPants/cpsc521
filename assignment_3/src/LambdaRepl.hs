@@ -56,12 +56,20 @@ add_global_binding binding = modify $ (over global_bindings (++ [binding]))
 add_global_bindings :: [L.Binding] -> Lambda_Repl ()
 add_global_bindings binding_list = modify $ (over global_bindings (binding_list ++))
 
+add_global_declarations :: [L.Lambda_Declaration] -> Lambda_Repl ()
+add_global_declarations declaration_list = 
+  modify $ (over type_declarations (declaration_list ++))
+
 get_global_bindings :: Lambda_Repl [L.Binding]
 get_global_bindings = get >>= \st -> return (st^.global_bindings)
 
 get_global_symbol_names :: Lambda_Repl [String]
 get_global_symbol_names = 
   get >>= \st -> return $ bindings_to_names (st^.global_bindings)
+
+get_type_declarations :: Lambda_Repl [L.Lambda_Declaration]
+get_type_declarations = 
+  get >>= \st -> return $ st^.type_declarations
 
 bindings_to_names :: [L.Binding] -> [String]
 bindings_to_names = fmap binding_to_name
@@ -101,7 +109,8 @@ parse_and_inject_binding src =
 type_expression_with_global_bindings :: L.Lambda_Expr -> Lambda_Repl (Either String T.Type)
 type_expression_with_global_bindings lambda = do
   global_bindings <- get_global_bindings
-  let expr_type = T.type_expression_with_initial_state global_bindings lambda
+  type_declarations <- get_type_declarations
+  let expr_type = T.type_expression_with_initial_state global_bindings type_declarations lambda
   return expr_type
 
 -- ****************************************************************************
@@ -110,7 +119,7 @@ type_expression_with_global_bindings lambda = do
 type Lambda_Repl a = ReplState Repl_State a
   
 mk_init_state_for_lambda :: Repl_State
-mk_init_state_for_lambda = Repl_State []
+mk_init_state_for_lambda = Repl_State [] []
 
 lambda_repl_init :: Lambda_Repl ()
 lambda_repl_init = return ()
@@ -239,30 +248,45 @@ compile args =
 debug :: [String] -> Lambda_Repl ()
 debug args = get_global_bindings >>= \v -> liftIO $ debug_repl args v
 
+-- load :: [String] -> Lambda_Repl ()
+-- load args = do
+--   case get_filepath_from_args args of
+--     Nothing -> liftIO $ putStrLn "Must provide a file path."
+--     Just file_path -> do
+--       file_contents <- liftIO $ readFile file_path
+--       let lambda_defns = lines file_contents
+--           binding_list = L.parse_lambda_file lambda_defns
+--       add_global_bindings binding_list
+
 load :: [String] -> Lambda_Repl ()
 load args = do
   case get_filepath_from_args args of
     Nothing -> liftIO $ putStrLn "Must provide a file path."
     Just file_path -> do
       file_contents <- liftIO $ readFile file_path
-      let lambda_defns = lines file_contents
-          binding_list = L.parse_lambda_file lambda_defns
-      add_global_bindings binding_list
+      case L.parse_lambda_file file_contents of
+        (Left err) -> liftIO $ do 
+          putStrLn "Failed to parse lambda file:" >> putStrLn err
+        (Right (L.Lambda_File declarations bindings)) -> do
+          add_global_bindings bindings
+          add_global_declarations declarations
+
 
 print_bindings :: [String] -> Lambda_Repl ()
 print_bindings _ = do
   bindings <- get_global_bindings
-  let pretty_bindings = fmap (decl_of_binding bindings) bindings
+  type_declarations <- get_type_declarations
+  let pretty_bindings = fmap (decl_of_binding bindings type_declarations) bindings
   liftIO $ mapM_ (\v -> putStrLn $ "    " ++ v) pretty_bindings
   where
     -- @Hack: Passing the var name as the expression. Should be more clear.
-    decl_of_binding :: [L.Binding] -> L.Binding -> String
-    decl_of_binding global_bindings (L.Binding name expr) = 
-      case T.type_expression_with_initial_state global_bindings expr of
+    decl_of_binding :: [L.Binding] -> [L.Lambda_Declaration] -> L.Binding -> String
+    decl_of_binding global_bindings type_declarations (L.Binding name expr) = 
+      case T.type_expression_with_initial_state global_bindings type_declarations expr of
         Left err -> err
         Right expr_type -> PP.print_type_declaration (L.Var name) expr_type
-    decl_of_binding global_bindings (L.RecBinding name expr) = 
-      case T.type_expression_with_initial_state global_bindings expr of
+    decl_of_binding global_bindings type_declarations (L.RecBinding name expr) = 
+      case T.type_expression_with_initial_state global_bindings type_declarations expr of
         Left err -> err
         Right expr_type -> PP.print_type_declaration (L.Var name) expr_type
 
@@ -289,8 +313,8 @@ print_expression_type args =
 
 print_bindings_with_no_types :: [String] -> Lambda_Repl ()
 print_bindings_with_no_types args = do
-  bindings <- get_global_bindings
-  liftIO $ putStrLn $ ppShow bindings
+  state <- get
+  liftIO $ putStrLn $ ppShow state
 
 -- ****************************************************************************
 --             Command Definition and Autocompletion (Debug Mode)

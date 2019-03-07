@@ -16,36 +16,34 @@ import qualified Data.Map as M
 
 import qualified LambdaParser as L
 
--- \x. x
---
--- Abstraction "x" (Var "x")
---
--- * From the appearance of the expression Var "x" in the body of the lambda, a new free type variable X is introducd. 
---   this also entails the type equation x :: X |- x :: Y <Y = X> which states "Given that x inhabits some type X, if
---   x also inhabits type Y then Y = X.
---
--- * Then from the abstraction it is deduced that (\x. x) :: Q, exists. X, Y. Q = X -> Y, Y = X
---
--- \x. x
--- E |- x::X -> 
-
 data Type
   = Type_Int
   | Type_Bool
   | Abstraction Type Type
+  | Type_User String
   | Type_Variable Int -- A free variable
   deriving (Show, Eq)
 
--- At each level of the AST it is possible to introduce one or more type variables and one or more type equations
--- which relate new type variables to existing type variables
 data Type_Equation
   = Type_Introduction [Type] [Type_Equation]
   | Type_Equality Type Type
   deriving (Show, Eq)
 
+-- ****************************************************************************
+--                              Misc. Helpers
+-- ****************************************************************************
+__convert_from_lambda_type_to_typer_type__ :: L.Type -> Type
+__convert_from_lambda_type_to_typer_type__ (L.Type_Int) = Type_Int
+__convert_from_lambda_type_to_typer_type__ (L.Type_Bool) = Type_Bool
+__convert_from_lambda_type_to_typer_type__ (L.Type_User type_name) = Type_User type_name
+
+-- ****************************************************************************
+--                              Typer Monad Stack
+-- ****************************************************************************
 data Type_State = Type_State
-  { _label :: Int
-  , _environment :: M.Map String Type
+  { _label          :: Int
+  , _environment    :: M.Map String Type
+  , _declared_types :: M.Map String (Type, [Type])
   }
   deriving (Show, Eq)
 
@@ -55,9 +53,10 @@ makeLenses ''Type_State
 type Typer_State a = StateT Type_State (ExceptT String Identity) a
 
 mk_empty_type_state :: Type_State
-mk_empty_type_state = Type_State 1 M.empty
+mk_empty_type_state = Type_State 1 M.empty M.empty
 
 mk_initial_type_state :: [L.Binding] -> M.Map String Type
+mk_initial_type_state [] = M.empty
 mk_initial_type_state (b:bs) = 
   let (binding_ident, binding_type) = process_one_binding b
       rec_call = mk_initial_type_state bs
@@ -71,13 +70,28 @@ mk_initial_type_state (b:bs) =
       where
         (Right expr_type) = type_expression lambda_expr
 
-runTyperState :: Typer_State a -> Either String a
-runTyperState typer_state = 
-  case exec_result of 
-    Left err -> Left err
-    Right a -> Right a
+mk_initial_type_state_from_declarations :: [L.Lambda_Declaration] -> Type_State
+mk_initial_type_state_from_declarations [] = mk_empty_type_state
+mk_initial_type_state_from_declarations ((L.Type_Declaration type_name type_info):ds) = 
+  let rec_call = mk_initial_type_state_from_declarations ds
+      fold_fn acc (constructor_name, constructor_arguments) = 
+        M.insert constructor_name (converted_type_name, constructor_arguments) acc
+      map_fn (constructor_name, cons_args) = 
+        (constructor_name, fmap __convert_from_lambda_type_to_typer_type__ cons_args) 
+      converted_type_info = fmap map_fn type_info
+      converted_type_name =  __convert_from_lambda_type_to_typer_type__ type_name
+      this_level = foldl fold_fn (rec_call^.declared_types) converted_type_info
+  in set declared_types this_level rec_call
+
+run_typer_state :: Typer_State a -> Either String a
+run_typer_state typer_state = exec_result
   where
     exec_result = runIdentity $ runExceptT $ evalStateT typer_state mk_empty_type_state
+
+run_typer_with_initial_state :: Type_State -> Typer_State a -> Either String a
+run_typer_with_initial_state init_state typer_state = exec_result
+  where
+    exec_result = runIdentity $ runExceptT $ evalStateT typer_state init_state
   
 
 -- ****************************************************************************
@@ -105,6 +119,17 @@ lookup_in_env ident = do
 insert_into_env :: String -> Type -> Typer_State ()
 insert_into_env var_ident var_type = do
   modify $ over environment (M.insert var_ident var_type)
+
+lookup_user_type :: String -> Typer_State (Type, [Type])
+lookup_user_type type_name = do
+  current_state <- get
+  let user_types_map = current_state^.declared_types
+  case M.lookup type_name user_types_map of
+    Nothing -> throwError $ 
+      "Failed to find user declared type " ++ type_name ++ "\n"
+      ++ "Current typer state: \n" 
+      ++ (show current_state)
+    (Just type_info) -> return type_info
 
 remove_from_env :: String -> Typer_State ()
 remove_from_env var_ident = do
@@ -188,6 +213,18 @@ collect_constraints use_type (L.Conditional pred then_expr else_expr) = do
                         ++ else_constraints
   return $ Type_Introduction [] the_constraints
 
+collect_constraints use_type (L.User_Type_Instantiation constructor_name constructor_args) = do
+  (instantiation_type, arg_types) <- lookup_user_type constructor_name 
+  let constructor_args_with_types = zip constructor_args arg_types
+  constraints_from_args <- 
+    forM constructor_args_with_types (\(the_arg, expected_type) -> do
+      Type_Introduction _ constraints_from_arg <- collect_constraints expected_type the_arg
+      return constraints_from_arg)
+  let the_constraints = [ Type_Equality use_type instantiation_type
+                        ] 
+                        ++ (mconcat constraints_from_args)
+  return $ Type_Introduction [] the_constraints
+
 collect_constraints_for_int_bin_op 
   :: Type -> L.Lambda_Expr -> L.Lambda_Expr -> Typer_State Type_Equation
 collect_constraints_for_int_bin_op use_type lhs_expr rhs_expr = do
@@ -252,6 +289,7 @@ perform_substitution tv@(Type_Variable x) type_to_sub (Abstraction arg_t body_t)
 
 perform_substitution (Type_Variable x) type_to_sub (Type_Int) = Type_Int
 perform_substitution (Type_Variable x) type_to_sub (Type_Bool) = Type_Bool
+perform_substitution (Type_Variable x) type_to_sub (Type_User type_name) = Type_User type_name
 
 perform_substitution t1 t2 t3 = error $ show $ fmap show [t1, t2, t3]
 
@@ -271,8 +309,8 @@ substitute_over_constraints s cs = fmap map_fn cs
 -- ****************************************************************************
 type Unify a = ExceptT String Identity a
 
-runUnify :: Unify a -> Either String a
-runUnify = (runIdentity . runExceptT)
+run_unify :: Unify a -> Either String a
+run_unify = (runIdentity . runExceptT)
 
 unify_constraints :: [Type_Equation] -> Unify Substitution
 unify_constraints [] = return EmptySub
@@ -316,6 +354,7 @@ occurs_check t1@(Type_Variable _) (Abstraction arg_type body_type) =
   (occurs_check t1 arg_type) || (occurs_check t1 body_type)
 occurs_check (Type_Variable _) Type_Int = False
 occurs_check (Type_Variable _) Type_Bool = False
+occurs_check (Type_Variable _) (Type_User _) = False
 
 -- ****************************************************************************
 --                            Exposed Functions
@@ -325,17 +364,34 @@ type_expression lambda_expr =
   case typer_exec_result of
     Left err_msg -> Left err_msg
     Right (Type_Introduction vs generated_constraints) ->
-      case runUnify $ unify_constraints generated_constraints of
+      case run_unify $ unify_constraints generated_constraints of
         Left err_msg -> Left err_msg
         Right unification -> 
           let unification_result = substitute_over_constraints unification generated_constraints
               expr_type = apply_substitution unification (Type_Variable 0)
           in Right expr_type
   where
-    typer_exec_result = runTyperState (collect_constraints (Type_Variable 0) lambda_expr)
+    typer_exec_result = run_typer_state (collect_constraints (Type_Variable 0) lambda_expr)
+
+type_expression_with_declarations :: [L.Lambda_Declaration] -> L.Lambda_Expr -> Either String Type
+type_expression_with_declarations declarations lambda_expr = 
+  case typer_exec_result of
+    Left err_msg -> Left err_msg
+    Right (Type_Introduction vs generated_constraints) ->
+      case run_unify $ unify_constraints generated_constraints of
+        Left err_msg -> Left err_msg
+        Right unification ->
+          let unification_result = substitute_over_constraints unification generated_constraints
+              expr_type = apply_substitution unification (Type_Variable 0)
+          in Right expr_type
+  where
+    typer_exec_result = 
+      run_typer_with_initial_state initial_state (collect_constraints (Type_Variable 0) lambda_expr)
+    initial_state = mk_initial_type_state_from_declarations declarations
       
-type_expression_with_initial_state :: [L.Binding] -> L.Lambda_Expr -> Either String Type
-type_expression_with_initial_state bindings expr = type_expression augmented_expr
+type_expression_with_initial_state :: [L.Binding] -> [L.Lambda_Declaration] -> L.Lambda_Expr -> Either String Type
+type_expression_with_initial_state bindings declarations expr = 
+  type_expression_with_declarations declarations augmented_expr
   where
     augmented_expr = L.Let bindings expr
     

@@ -6,6 +6,8 @@ module LambdaParser
   , Lambda_Expr (..)
   , Binding (..)
   , Lambda_Declaration (..)
+  , Lambda_File (..)
+  , Type (..)
   ) where
 
 import Text.Parsec.Char
@@ -194,36 +196,42 @@ comment_parser = do
 comment_token_parser :: Parser ()
 comment_token_parser = char '#' >> return ()
 
-parse_lambda_file :: [String] -> [Binding]
-parse_lambda_file [] = []
-parse_lambda_file (x:xs) = do
-  case parse lambda_file_parser "" x of
-    Left parse_error -> parse_lambda_file xs
-    Right parse_result -> 
-      case parse_result of  
-        Nothing -> parse_lambda_file xs
-        Just binding -> binding : (parse_lambda_file xs)
-
 new_lambda_file_parser :: Parser Lambda_File
-new_lambda_file_parser = do
+new_lambda_file_parser = do 
+  declarations <- many $ try declaration_parser
+  spaces_and_newlines
+  bindings <- many $ try binding_with_newline 
+  spaces_and_newlines
+  eof
+  return $ Lambda_File declarations bindings
+  where
+    binding_with_newline = do
+      binding <- try bind_expression_parser
+      char ';'
+      newline <|> endOfLine
+      return binding
+    spaces_and_newlines = many $ choice [newline >> return (), space >> return ()] >> return ()
+
+declaration_or_binding_parser :: Parser (Either Lambda_Declaration Binding)
+declaration_or_binding_parser = do  
+  parserTrace "HELLO"
+  spaces
   maybe_declaration <- optionMaybe $ try declaration_parser
+  spaces
+  optional newline 
   case maybe_declaration of
     Nothing -> do
+      spaces
       maybe_binding <- optionMaybe $ try bind_expression_parser
+      spaces
+      optional newline
       case maybe_binding of
-        Nothing -> do
-          spaces
-          eof
-          return $ Lambda_File [] []
-        (Just binding) -> do
-          Lambda_File declarations bindings <- new_lambda_file_parser
-          return $ Lambda_File declarations (binding : bindings)
-    (Just declaration) -> do
-      Lambda_File declarations bindings <- new_lambda_file_parser
-      return $ Lambda_File (declaration : declarations) bindings
+        Nothing -> parserZero
+        Just binding -> return $ Right binding
+    Just declaration -> return $ Left declaration
 
-parse_new_lambda_file :: String -> Either String Lambda_File
-parse_new_lambda_file source =
+parse_lambda_file :: String -> Either String Lambda_File
+parse_lambda_file source = 
   case parse new_lambda_file_parser "" source of
     Left err -> Left $ show err
     Right lambda_file -> Right lambda_file
@@ -245,7 +253,6 @@ bind_normal_expression_parser = do
   binary_equality_parser
   spaces
   rhs <- lambda_parser
-  eof
   return $ Binding lhs rhs
 
 bind_rec_expression_parser :: Parser Binding
@@ -259,7 +266,6 @@ bind_rec_expression_parser = do
   binary_equality_parser
   spaces
   rhs <- lambda_parser
-  eof
   return $ RecBinding lhs rhs
 
 parse_expression_binding :: String -> Either String Binding
@@ -685,7 +691,7 @@ test_declaration_parsing = do
 test_file_parsing :: IO ()
 test_file_parsing = do
   the_file <- readFile "./datatypes.lambda"
-  putStrLn $ ppShow $ parse_new_lambda_file the_file
+  putStrLn $ ppShow $ parse_lambda_file the_file
 
 
 main :: IO ()
